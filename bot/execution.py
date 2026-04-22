@@ -1,5 +1,5 @@
 import random
-from config import MODE
+from bot.config import MODE
 
 class ExecutionEngine:
 
