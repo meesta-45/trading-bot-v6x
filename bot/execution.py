@@ -1,5 +1,5 @@
-import random
 from bot.config import MODE
+import random
 
 class ExecutionEngine:
 
