@@ -4,18 +4,17 @@ import time
 
 app = Flask(__name__)
 
-# ---- BOT LOGIC ----
 def bot_loop():
-    print("Bot started")
+    print("Bot thread started")
 
     while True:
-        print("Bot running...")
-        time.sleep(5)
+        try:
+            print("Bot running...")
+            time.sleep(5)
+        except Exception as e:
+            print("Bot error:", e)
+            time.sleep(5)
 
-# ---- START BOT IN BACKGROUND ----
-threading.Thread(target=bot_loop).start()
-
-# ---- WEB SERVER (RENDER NEEDS THIS) ----
 @app.route("/")
 def home():
     return "Bot is running"
@@ -23,5 +22,9 @@ def home():
 @app.route("/status")
 def status():
     return {"status": "live"}
+
+# IMPORTANT: daemon ensures Render doesn't kill thread silently
+thread = threading.Thread(target=bot_loop, daemon=True)
+thread.start()
 
 app.run(host="0.0.0.0", port=10000)
