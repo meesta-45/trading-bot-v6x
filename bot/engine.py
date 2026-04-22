@@ -1,31 +1,30 @@
-from bot.strategy import Strategy
-from bot.risk import RiskManager
-from bot.execution import ExecutionEngine
+import threading
+from flask import Flask
 
-class Engine:
+from bot.engine import Engine
+from bot.feed import Feed
+from bot.config import SYMBOL
 
-    def __init__(self):
-        self.prices = []
-        self.strategy = Strategy()
-        self.risk = RiskManager()
-        self.exec = ExecutionEngine()
+app = Flask(__name__)
 
-    def on_price(self, price):
+engine = Engine()
 
-        self.prices.append(price)
+def run_feed():
+    feed = Feed(SYMBOL, engine.on_price)
+    feed.start()
 
-        if len(self.prices) > 100:
-            self.prices.pop(0)
+def run_bot():
+    print("V9 BOT RUNNING")
 
-        if len(self.prices) < 30:
-            return
+threading.Thread(target=run_feed, daemon=True).start()
+threading.Thread(target=run_bot, daemon=True).start()
 
-        signal = self.strategy.signal(self.prices)
+@app.route("/")
+def home():
+    return "V9 Trading System Live"
 
-        if self.risk.allow(signal):
+@app.route("/status")
+def status():
+    return {"status": "running"}
 
-            result = self.exec.execute("R_75", signal)
-
-            self.risk.update(result)
-
-            print("SIGNAL:", signal, "RESULT:", result)
+app.run(host="0.0.0.0", port=10000)
