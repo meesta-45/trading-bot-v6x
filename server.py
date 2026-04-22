@@ -1,10 +1,9 @@
-from flask import Flask
 import threading
-import time
+from flask import Flask
 
-from strategy import Strategy
-from bot_logic import BotEngine
-from data_feed import DataFeed
+from bot.engine import Engine
+from bot.feed import Feed
+from bot.config import SYMBOL
 
 app = Flask(__name__)
 
