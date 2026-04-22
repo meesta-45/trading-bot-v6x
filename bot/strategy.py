@@ -4,17 +4,18 @@ class Strategy:
 
     def signal(self, prices):
 
-        if len(prices) < 20:
+        if len(prices) < 30:
             return "NO_TRADE"
 
         short = statistics.mean(prices[-5:])
-        long = statistics.mean(prices[-20:])
+        mid = statistics.mean(prices[-15:])
+        long = statistics.mean(prices[-30:])
         current = prices[-1]
 
-        if current > short and short > long:
+        if short > mid > long and current > short:
             return "BUY"
 
-        if current < short and short < long:
+        if short < mid < long and current < short:
             return "SELL"
 
         return "NO_TRADE"
