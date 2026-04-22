@@ -1,7 +1,6 @@
-from strategy import Strategy
-from risk import RiskManager
-from execution import ExecutionEngine
-from config import SYMBOL
+from bot.strategy import Strategy
+from bot.risk import RiskManager
+from bot.execution import ExecutionEngine
 
 class Engine:
 
@@ -25,10 +24,8 @@ class Engine:
 
         if self.risk.allow(signal):
 
-            result = self.exec.execute(SYMBOL, signal)
+            result = self.exec.execute("R_75", signal)
 
             self.risk.update(result)
 
-            print("SIGNAL:", signal, "RESULT:", result)from bot.config import MODE  from bot.execution import ExecutionEngine
-from bot.strategy import Strategy
-from bot.risk import RiskManager
+            print("SIGNAL:", signal, "RESULT:", result)
