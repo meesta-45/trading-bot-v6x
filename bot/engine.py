@@ -30,3 +30,4 @@ class Engine:
             self.risk.update(result)
 
             print("SIGNAL:", signal, "RESULT:", result)
+from config import MODE, SYMBOL
