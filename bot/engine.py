@@ -29,5 +29,6 @@ class Engine:
 
             self.risk.update(result)
 
-            print("SIGNAL:", signal, "RESULT:", result)
-from config import MODE, SYMBOL
+            print("SIGNAL:", signal, "RESULT:", result)from bot.config import MODE  from bot.execution import ExecutionEngine
+from bot.strategy import Strategy
+from bot.risk import RiskManager
