@@ -1,9 +1,11 @@
+print("NEW MAIN FILE LOADED")
+
 import threading
 from flask import Flask
 
-from engine import Engine
-from feed import Feed
-from config import SYMBOL
+from bot.engine import Engine
+from bot.feed import Feed
+from bot.config import SYMBOL
 
 app = Flask(__name__)
 
@@ -13,11 +15,7 @@ def run_feed():
     feed = Feed(SYMBOL, engine.on_price)
     feed.start()
 
-def run_bot():
-    print("V9 BOT RUNNING")
-
 threading.Thread(target=run_feed, daemon=True).start()
-threading.Thread(target=run_bot, daemon=True).start()
 
 @app.route("/")
 def home():
