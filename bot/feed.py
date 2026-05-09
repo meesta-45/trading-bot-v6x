@@ -1,7 +1,6 @@
-import websocket
+import asyncio
 import json
-import ssl
-import time
+import websockets
 
 class Feed:
 
@@ -10,60 +9,48 @@ class Feed:
         self.symbol = symbol
         self.callback = callback
 
-    def on_message(self, ws, message):
+    async def connect(self):
 
-        data = json.loads(message)
-
-        if "tick" in data:
-
-            price = float(data["tick"]["quote"])
-
-            print("LIVE PRICE:", price)
-
-            self.callback(price)
-
-    def on_error(self, ws, error):
-
-        print("WEBSOCKET ERROR:", error)
-
-    def on_close(self, ws, close_status_code, close_msg):
-
-        print("WEBSOCKET CLOSED")
-
-    def on_open(self, ws):
-
-        print("CONNECTED TO DERIV")
-
-        payload = {
-            "ticks": self.symbol
-        }
-
-        ws.send(json.dumps(payload))
-
-    def start(self):
+        url = "wss://ws.derivws.com/websockets/v3?app_id=1089"
 
         while True:
 
             try:
 
-                print("STARTING WEBSOCKET...")
+                print("CONNECTING TO DERIV...")
 
-                ws = websocket.WebSocketApp(
-                    "wss://ws.derivws.com/websockets/v3?app_id=1089",
-                    on_open=self.on_open,
-                    on_message=self.on_message,
-                    on_error=self.on_error,
-                    on_close=self.on_close
-                )
+                async with websockets.connect(url) as websocket:
 
-                ws.run_forever(
-                    sslopt={"cert_reqs": ssl.CERT_NONE}
-                )
+                    print("CONNECTED TO DERIV")
+
+                    payload = {
+                        "ticks": self.symbol
+                    }
+
+                    await websocket.send(json.dumps(payload))
+
+                    while True:
+
+                        message = await websocket.recv()
+
+                        data = json.loads(message)
+
+                        if "tick" in data:
+
+                            price = float(data["tick"]["quote"])
+
+                            print("LIVE PRICE:", price)
+
+                            self.callback(price)
 
             except Exception as e:
 
-                print("FEED CRASH:", e)
+                print("WEBSOCKET ERROR:", e)
 
-            print("RECONNECTING IN 5 SECONDS...")
+                print("RECONNECTING IN 5 SECONDS...")
 
-            time.sleep(5)
+                await asyncio.sleep(5)
+
+    def start(self):
+
+        asyncio.run(self.connect())
