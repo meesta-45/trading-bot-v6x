@@ -1,28 +1,32 @@
-print("NEW MAIN FILE LOADED")
-
 import threading
 from flask import Flask
 
-from bot.engine import Engine
 from bot.feed import Feed
+from bot.engine import Engine
 from bot.config import SYMBOL
+
+print("V10 SYSTEM STARTING")
 
 app = Flask(__name__)
 
 engine = Engine()
 
 def run_feed():
+
     feed = Feed(SYMBOL, engine.on_price)
+
     feed.start()
 
 threading.Thread(target=run_feed, daemon=True).start()
 
 @app.route("/")
 def home():
-    return "V9 Trading System Live"
+    return "V10 Deriv AI System Running"
 
 @app.route("/status")
 def status():
-    return {"status": "running"}
+    return {
+        "status": "running"
+    }
 
 app.run(host="0.0.0.0", port=10000)
