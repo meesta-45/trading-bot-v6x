@@ -17,7 +17,9 @@ def run_feed():
 
     feed.start()
 
-threading.Thread(target=run_feed, daemon=True).start()
+feed_thread = threading.Thread(target=run_feed)
+
+feed_thread.start()
 
 @app.route("/")
 def home():
