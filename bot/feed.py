@@ -1,5 +1,7 @@
 import websocket
 import json
+import ssl
+import time
 
 class Feed:
 
@@ -40,14 +42,28 @@ class Feed:
 
     def start(self):
 
-        print("STARTING WEBSOCKET...")
+        while True:
 
-        ws = websocket.WebSocketApp(
-            "wss://ws.binaryws.com/websockets/v3?app_id=1089",
-            on_open=self.on_open,
-            on_message=self.on_message,
-            on_error=self.on_error,
-            on_close=self.on_close
-        )
+            try:
 
-        ws.run_forever()
+                print("STARTING WEBSOCKET...")
+
+                ws = websocket.WebSocketApp(
+                    "wss://ws.derivws.com/websockets/v3?app_id=1089",
+                    on_open=self.on_open,
+                    on_message=self.on_message,
+                    on_error=self.on_error,
+                    on_close=self.on_close
+                )
+
+                ws.run_forever(
+                    sslopt={"cert_reqs": ssl.CERT_NONE}
+                )
+
+            except Exception as e:
+
+                print("FEED CRASH:", e)
+
+            print("RECONNECTING IN 5 SECONDS...")
+
+            time.sleep(5)
