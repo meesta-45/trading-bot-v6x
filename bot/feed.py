@@ -11,6 +11,8 @@ class Feed:
 
     async def connect(self):
 
+        print("ENTERED CONNECT FUNCTION")
+
         url = "wss://ws.derivws.com/websockets/v3?app_id=1089"
 
         while True:
@@ -29,11 +31,15 @@ class Feed:
 
                     await websocket.send(json.dumps(payload))
 
+                    print("SUBSCRIBED TO TICKS")
+
                     while True:
 
                         message = await websocket.recv()
 
                         data = json.loads(message)
+
+                        print("RAW MESSAGE:", data)
 
                         if "tick" in data:
 
@@ -45,12 +51,18 @@ class Feed:
 
             except Exception as e:
 
-                print("WEBSOCKET ERROR:", e)
-
-                print("RECONNECTING IN 5 SECONDS...")
+                print("WEBSOCKET ERROR:", str(e))
 
                 await asyncio.sleep(5)
 
     def start(self):
 
-        asyncio.run(self.connect())
+        print("START METHOD CALLED")
+
+        try:
+
+            asyncio.run(self.connect())
+
+        except Exception as e:
+
+            print("ASYNCIO ERROR:", str(e))
