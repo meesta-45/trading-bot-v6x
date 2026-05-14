@@ -2,6 +2,7 @@ import asyncio
 import json
 import websockets
 
+
 class Feed:
 
     def __init__(self, symbol, callback):
@@ -13,7 +14,7 @@ class Feed:
 
         print("ENTERED CONNECT FUNCTION")
 
-        url = "wss://ws.derivws.com/websockets/v3?app_id=1089"
+        url = "wss://ws.binaryws.com/websockets/v3?app_id=1089"
 
         while True:
 
@@ -21,7 +22,14 @@ class Feed:
 
                 print("CONNECTING TO DERIV...")
 
-                async with websockets.connect(url) as websocket:
+                async with websockets.connect(
+                    url,
+                    ping_interval=20,
+                    ping_timeout=20,
+                    close_timeout=10,
+                    open_timeout=30,
+                    ssl=True
+                ) as websocket:
 
                     print("CONNECTED TO DERIV")
 
@@ -52,6 +60,8 @@ class Feed:
             except Exception as e:
 
                 print("WEBSOCKET ERROR:", str(e))
+
+                print("RECONNECTING IN 5 SECONDS...")
 
                 await asyncio.sleep(5)
 
