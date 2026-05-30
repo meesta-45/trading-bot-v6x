@@ -1,1 +1,1 @@
-self.tracker = TradeTracker()
+
