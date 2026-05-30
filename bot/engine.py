@@ -152,3 +152,4 @@ class Engine:
         signal = self.generate_signal()
 
         self.execute_trade(signal)
+    from bot.tracker import TradeTracker
