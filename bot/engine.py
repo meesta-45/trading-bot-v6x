@@ -5,6 +5,7 @@ from bot.indicators.macd import calculate_macd
 
 from bot.confidence import ConfidenceEngine
 from bot.deriv_execution import DerivExecution
+from bot.tracker import TradeTracker
 
 
 class Engine:
@@ -17,9 +18,14 @@ class Engine:
 
         self.execution = DerivExecution()
 
+        self.tracker = TradeTracker()
+
         self.cooldown = 0
 
     def analyze_digits(self):
+
+        if len(self.prices) < 20:
+            return None
 
         digits = [
             int(str(price)[-1])
@@ -50,6 +56,9 @@ class Engine:
         if ema10 is None or ema20 is None:
             return None
 
+        print("EMA10:", ema10)
+        print("EMA20:", ema20)
+
         if ema10 > ema20:
             return "UP"
 
@@ -66,7 +75,10 @@ class Engine:
 
         trend_score = trend in ["UP", "DOWN"]
 
-        macd_score = macd is not None and abs(macd) > 0.5
+        macd_score = (
+            macd is not None and
+            abs(macd) > 0.5
+        )
 
         confidence = self.confidence_engine.calculate(
             trend_score,
@@ -98,14 +110,16 @@ class Engine:
 
             return {
                 "contract": "RISE",
-                "confidence": confidence
+                "confidence": confidence,
+                "digit": digit
             }
 
         elif trend == "DOWN":
 
             return {
                 "contract": "FALL",
-                "confidence": confidence
+                "confidence": confidence,
+                "digit": digit
             }
 
         return None
@@ -134,9 +148,22 @@ class Engine:
             confidence
         )
 
-        self.execution.buy(
+        result = self.execution.buy(
             contract=contract,
             amount=1
+        )
+
+        if result == "WIN":
+
+            self.tracker.record_win(10)
+
+        else:
+
+            self.tracker.record_loss(10)
+
+        print(
+            "STATS:",
+            self.tracker.stats()
         )
 
         self.cooldown = 5
@@ -149,7 +176,8 @@ class Engine:
 
             self.prices.pop(0)
 
+        print("LIVE PRICE:", price)
+
         signal = self.generate_signal()
 
         self.execute_trade(signal)
-    from bot.tracker import TradeTracker
