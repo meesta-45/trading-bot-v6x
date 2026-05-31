@@ -1,223 +1,152 @@
-from collections import Counter
-import statistics
+from collections import deque
 
-from bot.indicators.ema import calculate_ema
-from bot.indicators.macd import calculate_macd
+from bot.regime.detector import MarketRegime
 
-from bot.confidence import ConfidenceEngine
-from bot.deriv_execution import DerivExecution
-from bot.tracker import TradeTracker
+from bot.strategies.trend import TrendStrategy
+from bot.strategies.mean_reversion import MeanReversionStrategy
+from bot.strategies.breakout import BreakoutStrategy
+
+from bot.portfolio.voting import VotingEngine
+from bot.risk.risk_engine import RiskEngine
+
+from bot.storage.database import TradeDB
+from bot.portfolio.weights import StrategyWeights
+from bot.risk.kill_switch import KillSwitch
+from bot.analysis.performance_tracker import PerformanceTracker
 
 
 class Engine:
 
     def __init__(self):
 
-        self.prices = []
+        self.prices = deque(maxlen=500)
 
-        self.confidence_engine = ConfidenceEngine()
+        self.regime_detector = MarketRegime()
 
-        self.execution = DerivExecution()
-
-        self.tracker = TradeTracker()
-
-        self.cooldown = 0
-
-        self.base_threshold = 70
-
-    # ----------------------------
-    # DIGIT ANALYSIS (v12 improved)
-    # ----------------------------
-    def analyze_digits(self):
-
-        if len(self.prices) < 20:
-            return None
-
-        digits = [int(str(p)[-1]) for p in self.prices[-20:]]
-
-        counts = Counter(digits)
-
-        total = sum(counts.values())
-
-        weighted = {
-            k: v / total for k, v in counts.items()
+        self.strategies = {
+            "trend": TrendStrategy(),
+            "mean_reversion": MeanReversionStrategy(),
+            "breakout": BreakoutStrategy()
         }
 
-        digit, weight = max(weighted.items(), key=lambda x: x[1])
+        self.voting = VotingEngine()
+        self.risk = RiskEngine()
 
-        print(f"DOMINANT DIGIT: {digit} ({weight:.2f})")
+        self.weights = StrategyWeights()
+        self.killswitch = KillSwitch()
+        self.performance = PerformanceTracker()
+        self.db = TradeDB()
 
-        return digit, weight
+        self.balance = 10000
+        self.peak_balance = 10000
 
-    # ----------------------------
-    # TREND ANALYSIS (v12 upgraded)
-    # ----------------------------
-    def analyze_trend(self):
-
-        if len(self.prices) < 30:
-            return None, 0
-
-        ema10 = calculate_ema(self.prices, 10)
-        ema20 = calculate_ema(self.prices, 20)
-
-        if ema10 is None or ema20 is None:
-            return None, 0
-
-        diff = abs(ema10 - ema20)
-
-        # trend strength (v12 improvement)
-        strength = min(diff / ema20, 1)
-
-        if ema10 > ema20:
-            return "UP", strength
-
-        elif ema10 < ema20:
-            return "DOWN", strength
-
-        return "SIDEWAYS", 0
-
-    # ----------------------------
-    # VOLATILITY FILTER (NEW v12)
-    # ----------------------------
-    def volatility(self):
-
-        if len(self.prices) < 20:
-            return 0
-
-        return statistics.pstdev(self.prices[-20:])
-
-    # ----------------------------
-    # CONFIDENCE ENGINE (v12 upgraded)
-    # ----------------------------
-    def calculate_confidence(self):
-
-        trend, strength = self.analyze_trend()
-
-        macd = calculate_macd(self.prices)
-
-        volatility = self.volatility()
-
-        trend_score = 1 if trend in ["UP", "DOWN"] else 0
-
-        macd_score = 0
-        if macd is not None:
-            macd_score = min(abs(macd) / 2, 1)
-
-        volatility_score = 1 if volatility > 0 else 0
-
-        # core confidence
-        confidence = self.confidence_engine.calculate(
-            trend_score,
-            macd_score,
-            volatility_score,
-            strength > 0.3
-        )
-
-        # adaptive adjustment (v12 key upgrade)
-        if volatility < 0.5:
-            confidence -= 10  # avoid flat market traps
-
-        if strength > 0.6:
-            confidence += 10  # strong trend boost
-
-        return max(0, min(100, confidence))
-
-    # ----------------------------
-    # SIGNAL GENERATION (v12 refined)
-    # ----------------------------
-    def generate_signal(self):
-
-        trend, strength = self.analyze_trend()
-
-        digit_data = self.analyze_digits()
-
-        confidence = self.calculate_confidence()
-
-        print("TREND:", trend, "STRENGTH:", strength)
-        print("CONFIDENCE:", confidence)
-
-        # adaptive threshold (v12 upgrade)
-        threshold = self.base_threshold + (10 if strength > 0.5 else 0)
-
-        if confidence < threshold:
-
-            print("LOW CONFIDENCE — SKIPPING")
-
-            return None
-
-        if trend == "UP":
-
-            return {
-                "contract": "RISE",
-                "confidence": confidence,
-                "trend_strength": strength,
-                "digit": digit_data
-            }
-
-        elif trend == "DOWN":
-
-            return {
-                "contract": "FALL",
-                "confidence": confidence,
-                "trend_strength": strength,
-                "digit": digit_data
-            }
-
-        return None
-
-    # ----------------------------
-    # EXECUTION (v12 safer)
-    # ----------------------------
-    def execute_trade(self, signal):
-
-        if signal is None:
-            return
-
-        if self.cooldown > 0:
-
-            print("COOLDOWN ACTIVE")
-
-            self.cooldown -= 1
-
-            return
-
-        contract = signal["contract"]
-
-        confidence = signal["confidence"]
-
-        print("EXECUTING TRADE:", contract, "CONF:", confidence)
-
-        result = self.execution.buy(
-            contract=contract,
-            amount=1
-        )
-
-        if result == "WIN":
-
-            self.tracker.record_win(10)
-
-            self.cooldown = 3  # shorter after win
-
-        else:
-
-            self.tracker.record_loss(10)
-
-            self.cooldown = 6  # longer after loss
-
-        print("STATS:", self.tracker.stats())
-
-    # ----------------------------
-    # PRICE FEED
-    # ----------------------------
     def on_price(self, price):
 
         self.prices.append(price)
 
-        if len(self.prices) > 100:
-            self.prices.pop(0)
+        if len(self.prices) < 100:
+            return
 
-        print("LIVE PRICE:", price)
+        prices = list(self.prices)
 
-        signal = self.generate_signal()
+        regime = self.regime_detector.detect(prices)
 
-        self.execute_trade(signal)
+        signals = []
+        weighted_perf = {}
+
+        # =====================================
+        # STRATEGY EXECUTION
+        # =====================================
+        for name, strat in self.strategies.items():
+
+            signal = strat.generate(prices)
+
+            if not signal:
+                continue
+
+            # KILL SWITCH CHECK
+            allow = self.killswitch.evaluate(
+                name,
+                ev=signal["expected_value"],
+                drawdown=5,   # placeholder (upgrade later)
+                sharpe=1.0
+            )
+
+            if not allow:
+                continue
+
+            # weight injection
+            weight = self.weights.weights.get(name, 1)
+
+            signal["weight"] = weight
+            signal["strategy"] = name
+
+            signals.append(signal)
+
+        # =====================================
+        # VOTING ENGINE
+        # =====================================
+        decision = self.voting.combine(signals)
+
+        if not decision:
+            return
+
+        direction = decision["direction"]
+        score = decision["score"]
+
+        # =====================================
+        # RISK ENGINE
+        # =====================================
+        volatility = 1.0
+
+        size = self.risk.position_size(
+            self.balance,
+            kelly=0.2,
+            volatility=volatility
+        )
+
+        print("\n--- TRADE SIGNAL ---")
+        print("REGIME:", regime)
+        print("DIRECTION:", direction)
+        print("SCORE:", score)
+        print("SIZE:", size)
+
+        # =====================================
+        # SIMULATED RESULT HOOK (replace with broker later)
+        # =====================================
+        import random
+        pnl = random.uniform(-10, 15)
+        win = pnl > 0
+
+        self.balance += pnl
+
+        # update peak balance
+        if self.balance > self.peak_balance:
+            self.peak_balance = self.balance
+
+        # =====================================
+        # UPDATE PERFORMANCE SYSTEMS
+        # =====================================
+        for s in signals:
+            self.performance.record(s["strategy"], win)
+
+        perf = self.performance.performance()
+
+        self.weights.update(perf)
+
+        # =====================================
+        # DATABASE LOGGING
+        # =====================================
+        for s in signals:
+
+            self.db.log_trade(
+                strategy=s["strategy"],
+                direction=direction,
+                confidence=s["confidence"],
+                score=score,
+                regime=regime,
+                pnl=pnl
+            )
+
+        print("BALANCE:", self.balance)
+        print("WEIGHTS:", self.weights.weights)
