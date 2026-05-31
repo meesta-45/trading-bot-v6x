@@ -6,29 +6,29 @@ class TrendStrategy:
 
     def generate(self, prices):
 
-        if len(prices) < 30:
+        if len(prices) < 50:
             return None
 
         ema10 = calculate_ema(prices, 10)
-        ema20 = calculate_ema(prices, 20)
+        ema30 = calculate_ema(prices, 30)
 
         macd = calculate_macd(prices)
 
-        if ema10 is None or ema20 is None:
+        if ema10 is None or ema30 is None:
             return None
 
-        if ema10 > ema20 and macd > 0:
+        if ema10 > ema30 and macd > 0:
             return {
-                "direction": "RISE",
-                "confidence": 0.7,
-                "expected_value": 1.2
+                "direction": "LONG",
+                "confidence": 0.75,
+                "expected_value": 1.3
             }
 
-        if ema10 < ema20 and macd < 0:
+        if ema10 < ema30 and macd < 0:
             return {
-                "direction": "FALL",
-                "confidence": 0.7,
-                "expected_value": 1.2
+                "direction": "SHORT",
+                "confidence": 0.75,
+                "expected_value": 1.3
             }
 
         return None
