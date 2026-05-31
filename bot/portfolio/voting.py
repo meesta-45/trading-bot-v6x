@@ -9,7 +9,7 @@ class VotingEngine:
 
         for s in signals:
 
-            if s is None:
+            if not s:
                 continue
 
             direction = s["direction"]
@@ -24,9 +24,7 @@ class VotingEngine:
 
         best = max(votes.items(), key=lambda x: x[1])
 
-        direction, score = best
-
         return {
-            "contract": direction,
-            "score": score
+            "direction": best[0],
+            "score": best[1]
         }
