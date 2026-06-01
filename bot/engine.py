@@ -9,12 +9,7 @@ from bot.strategies.breakout import BreakoutStrategy
 from bot.portfolio.voting import VotingEngine
 from bot.risk.risk_engine import RiskEngine
 
-from bot.execution.slippage_model import SlippageModel
-
-from bot.analysis.drift import DriftDetector
-from bot.analysis.edge_decay import EdgeDecay
-
-from bot.portfolio.meta_allocator import MetaAllocator
+from bot.core.mode_controller import ModeController
 
 
 class Engine:
@@ -22,6 +17,11 @@ class Engine:
     def __init__(self):
 
         self.prices = deque(maxlen=500)
+
+        self.mode_controller = ModeController()
+
+        # default mode (YOU CONTROL THIS)
+        self.mode_controller.set_mode("FOREX")
 
         self.regime = MarketRegime()
 
@@ -34,124 +34,74 @@ class Engine:
         self.voting = VotingEngine()
         self.risk = RiskEngine()
 
-        self.slippage = SlippageModel()
-        self.drift = DriftDetector()
-        self.edge = EdgeDecay()
-        self.meta = MetaAllocator()
-
         self.balance = 10000
 
-        self.expected_return = 1.0
+    # =====================================
+    # MANUAL MODE SWITCH
+    # =====================================
+    def set_market_mode(self, mode):
 
-        # DEBUG MODE
-        self.debug = True
+        self.mode_controller.set_mode(mode)
 
     # =====================================
-    # MAIN PRICE LOOP
+    # MAIN LOOP
     # =====================================
     def on_price(self, price):
 
         self.prices.append(price)
 
-        print("\nLIVE PRICE:", price)
-
-        # ---------------------------------
-        # WAIT FOR ENOUGH DATA
-        # ---------------------------------
         if len(self.prices) < 100:
-
-            if self.debug:
-                print(
-                    "WAITING FOR DATA:",
-                    len(self.prices),
-                    "/100"
-                )
-
+            print("WAITING FOR DATA...")
             return
+
+        mode = self.mode_controller.get_mode()
 
         prices = list(self.prices)
 
-        # ---------------------------------
-        # REGIME DETECTION
-        # ---------------------------------
         regime = self.regime.detect(prices)
 
+        print("\n======================")
+        print("MODE:", mode)
         print("REGIME:", regime)
 
         signals = []
 
         # =====================================
-        # STRATEGY EXECUTION LOOP
+        # MODE FILTERING LOGIC
         # =====================================
+
         for name, strat in self.strategies.items():
 
-            try:
+            signal = strat.generate(prices)
 
-                signal = strat.generate(prices)
+            if not signal:
+                continue
 
-                print(
-                    f"STRATEGY [{name}] SIGNAL:",
-                    signal
-                )
+            # FILTER STRATEGIES BY MODE
+            if mode == "FOREX" and name == "mean_reversion":
+                continue  # weaker in forex in this version
 
-                if signal:
+            if mode == "CRYPTO" and name == "trend":
+                pass  # allowed
 
-                    signal["strategy"] = name
+            if mode == "SYNTHETIC" and name == "breakout":
+                continue
 
-                    signals.append(signal)
+            signal["strategy"] = name
+            signals.append(signal)
 
-            except Exception as e:
-
-                print(
-                    f"ERROR IN STRATEGY [{name}]:",
-                    e
-                )
-
-        # ---------------------------------
-        # SHOW ALL SIGNALS
-        # ---------------------------------
-        print("ALL SIGNALS:", signals)
-
-        # =====================================
-        # VOTING ENGINE
-        # =====================================
         decision = self.voting.combine(signals)
 
-        print("VOTING DECISION:", decision)
+        print("SIGNALS:", signals)
+        print("DECISION:", decision)
 
         if not decision:
-
-            print(
-                "NO CONSENSUS — NO TRADE EXECUTED"
-            )
-
+            print("NO TRADE")
             return
 
         direction = decision["direction"]
         score = decision["score"]
 
-        # ---------------------------------
-        # MINIMUM EDGE FILTER
-        # ---------------------------------
-        if score < 0.5:
-
-            print(
-                "LOW SCORE — TRADE REJECTED"
-            )
-
-            return
-
-        # =====================================
-        # EXECUTION SIMULATION
-        # =====================================
-        executed_price = self.slippage.apply(
-            price,
-            direction
-        )
-
-        # =====================================
-        # POSITION SIZING
-        # =====================================
         volatility = 1.0
 
         size = self.risk.position_size(
@@ -160,77 +110,5 @@ class Engine:
             volatility=volatility
         )
 
-        print("POSITION SIZE:", size)
-
-        # =====================================
-        # SIMULATED PNL
-        # =====================================
-        import random
-
-        pnl = random.uniform(-12, 18)
-
-        self.balance += pnl
-
-        # =====================================
-        # DRIFT DETECTION
-        # =====================================
-        actual = pnl
-
-        drift = self.drift.detect(
-            self.expected_return,
-            actual
-        )
-
-        if self.drift.is_broken(drift):
-
-            print(
-                "🚨 EDGE DRIFT DETECTED"
-            )
-
-        # =====================================
-        # EDGE TRACKING
-        # =====================================
-        self.edge.update(
-            "portfolio",
-            pnl
-        )
-
-        decaying = self.edge.is_decaying(
-            "portfolio"
-        )
-
-        if decaying:
-
-            print(
-                "⚠ EDGE DECAY DETECTED"
-            )
-
-        # =====================================
-        # FINAL TRADE OUTPUT
-        # =====================================
-        print("\n========================")
-        print("🚀 V17 TRADE EXECUTED")
-        print("========================")
-
-        print("DIRECTION:", direction)
-
-        print(
-            "EXECUTED PRICE:",
-            executed_price
-        )
-
-        print("SCORE:", score)
-
-        print("PNL:", round(pnl, 2))
-
-        print(
-            "BALANCE:",
-            round(self.balance, 2)
-        )
-
-        print(
-            "DRIFT:",
-            round(drift, 4)
-        )
-
-        print("========================")
+        print("TRADE:", direction)
+        print("SIZE:", size)
