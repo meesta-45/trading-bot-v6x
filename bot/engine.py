@@ -11,6 +11,10 @@ from bot.strategies.breakout import BreakoutStrategy
 from bot.portfolio.voting import VotingEngine
 from bot.risk.risk_engine import RiskEngine
 
+from bot.analysis.pnl_tracker import PnLTracker
+from bot.risk.volatility_engine import VolatilityEngine
+from bot.risk.drawdown_guard import DrawdownGuard
+
 
 class Engine:
 
@@ -18,17 +22,11 @@ class Engine:
 
         self.prices = deque(maxlen=500)
 
-        # =========================
-        # MARKET MODE SYSTEM
-        # =========================
-        self.mode_controller = ModeController()
-        self.mode_controller.set_mode("FOREX")  # default mode
+        self.mode = ModeController()
+        self.mode.set_mode("FOREX")
 
         self.regime = MarketRegime()
 
-        # =========================
-        # STRATEGIES
-        # =========================
         self.strategies = {
             "trend": TrendStrategy(),
             "mean_reversion": MeanReversionStrategy(),
@@ -38,143 +36,120 @@ class Engine:
         self.voting = VotingEngine()
         self.risk = RiskEngine()
 
+        # =========================
+        # V19 ADDITIONS
+        # =========================
+        self.pnl_tracker = PnLTracker()
+        self.vol_engine = VolatilityEngine()
+        self.drawdown = DrawdownGuard()
+
         self.balance = 10000
 
-        self.debug = True
-
-    # =====================================
-    # SWITCH MARKET MODE
-    # =====================================
     def set_market_mode(self, mode):
 
-        self.mode_controller.set_mode(mode)
+        self.mode.set_mode(mode)
 
-    # =====================================
-    # MAIN ENGINE LOOP
-    # =====================================
     def on_price(self, price):
 
         self.prices.append(price)
 
         print("\nLIVE PRICE:", price)
 
-        # WAIT FOR ENOUGH DATA
         if len(self.prices) < 100:
-
-            if self.debug:
-                print("WAITING FOR DATA:", len(self.prices), "/100")
-
+            print("WARMUP:", len(self.prices))
             return
-
-        mode = self.mode_controller.get_mode()
 
         prices = list(self.prices)
 
+        mode = self.mode.get_mode()
+
         regime = self.regime.detect(prices)
 
-        print("\n==============================")
-        print("ACTIVE MODE:", mode)
+        print("\n========================")
+        print("MODE:", mode)
         print("REGIME:", regime)
         print("BALANCE:", round(self.balance, 2))
-        print("==============================")
+
+        # =========================
+        # DRAWDOWN CHECK
+        # =========================
+        self.drawdown.update_peak(self.balance)
+
+        if self.drawdown.kill_switch(self.balance):
+            print("🚨 KILL SWITCH ACTIVATED (DRAWDOWN LIMIT)")
+            return
 
         signals = []
 
-        # =====================================
-        # GET MODE INSTRUMENTS (for future expansion)
-        # =====================================
-        symbols = INSTRUMENTS.get(mode, [])
-
-        if self.debug:
-            print("MODE INSTRUMENTS:", symbols)
-
-        # =====================================
-        # STRATEGY EXECUTION
-        # =====================================
+        # =========================
+        # STRATEGY LOOP
+        # =========================
         for name, strat in self.strategies.items():
 
             signal = strat.generate(prices)
 
-            print(f"STRATEGY [{name}] OUTPUT:", signal)
+            print(f"STRATEGY [{name}]:", signal)
 
-            if not signal:
-                continue
+            if signal:
 
-            # =========================
-            # MODE FILTERING LOGIC
-            # =========================
+                signal["strategy"] = name
+                signals.append(signal)
 
-            if mode == "FOREX":
-
-                # forex prefers trend + breakout
-                if name == "mean_reversion":
-                    continue
-
-            elif mode == "CRYPTO":
-
-                # crypto prefers breakout
-                if name == "mean_reversion":
-                    continue
-
-            elif mode == "SYNTHETIC":
-
-                # synthetic prefers mean reversion
-                if name == "breakout":
-                    continue
-
-            signal["strategy"] = name
-            signals.append(signal)
-
-        # =====================================
-        # VOTING ENGINE
-        # =====================================
         decision = self.voting.combine(signals)
 
-        print("\nALL SIGNALS:", signals)
-        print("VOTING RESULT:", decision)
+        print("\nVOTING:", decision)
 
         if not decision:
-
-            print("NO TRADE (NO CONSENSUS)")
             return
 
         direction = decision["direction"]
         score = decision["score"]
 
-        # =====================================
-        # EDGE FILTER
-        # =====================================
         if score < 0.5:
-
-            print("TRADE REJECTED (LOW EDGE)")
+            print("LOW EDGE")
             return
 
-        # =====================================
-        # RISK SIZING
-        # =====================================
-        volatility = 1.0
+        # =========================
+        # VOLATILITY ESTIMATE (simple proxy)
+        # =========================
+        returns = [
+            prices[i] - prices[i - 1]
+            for i in range(1, len(prices))
+        ]
 
+        vol = self.vol_engine.compute(returns)
+
+        # =========================
+        # RISK SIZING
+        # =========================
         size = self.risk.position_size(
             self.balance,
             kelly=0.2,
-            volatility=volatility
+            volatility=vol
         )
 
-        # =====================================
-        # SIMULATED EXECUTION (placeholder for broker)
-        # =====================================
+        # =========================
+        # EXECUTION SIMULATION
+        # =========================
         import random
 
-        pnl = random.uniform(-12, 18)
+        pnl = random.uniform(-15, 20)
 
         self.balance += pnl
 
-        # =====================================
-        # TRADE OUTPUT
-        # =====================================
+        # =========================
+        # TRACK PERFORMANCE
+        # =========================
+        for s in signals:
+            self.pnl_tracker.record(s["strategy"], pnl)
+
+        # =========================
+        # OUTPUT
+        # =========================
         print("\n🚀 TRADE EXECUTED")
         print("DIRECTION:", direction)
         print("SCORE:", round(score, 3))
+        print("VOL:", round(vol, 4))
         print("SIZE:", round(size, 2))
         print("PNL:", round(pnl, 2))
         print("NEW BALANCE:", round(self.balance, 2))
