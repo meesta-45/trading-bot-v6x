@@ -9,10 +9,12 @@ from bot.strategies.breakout import BreakoutStrategy
 from bot.portfolio.voting import VotingEngine
 from bot.risk.risk_engine import RiskEngine
 
-from bot.storage.database import TradeDB
-from bot.portfolio.weights import StrategyWeights
-from bot.risk.kill_switch import KillSwitch
-from bot.analysis.performance_tracker import PerformanceTracker
+from bot.execution.slippage_model import SlippageModel
+
+from bot.analysis.drift import DriftDetector
+from bot.analysis.edge_decay import EdgeDecay
+
+from bot.portfolio.meta_allocator import MetaAllocator
 
 
 class Engine:
@@ -21,7 +23,7 @@ class Engine:
 
         self.prices = deque(maxlen=500)
 
-        self.regime_detector = MarketRegime()
+        self.regime = MarketRegime()
 
         self.strategies = {
             "trend": TrendStrategy(),
@@ -32,13 +34,14 @@ class Engine:
         self.voting = VotingEngine()
         self.risk = RiskEngine()
 
-        self.weights = StrategyWeights()
-        self.killswitch = KillSwitch()
-        self.performance = PerformanceTracker()
-        self.db = TradeDB()
+        self.slippage = SlippageModel()
+        self.drift = DriftDetector()
+        self.edge = EdgeDecay()
+        self.meta = MetaAllocator()
 
         self.balance = 10000
-        self.peak_balance = 10000
+
+        self.expected_return = 1.0
 
     def on_price(self, price):
 
@@ -49,14 +52,13 @@ class Engine:
 
         prices = list(self.prices)
 
-        regime = self.regime_detector.detect(prices)
+        regime = self.regime.detect(prices)
 
         signals = []
-        weighted_perf = {}
 
-        # =====================================
-        # STRATEGY EXECUTION
-        # =====================================
+        # ----------------------------
+        # STRATEGY LOOP
+        # ----------------------------
         for name, strat in self.strategies.items():
 
             signal = strat.generate(prices)
@@ -64,28 +66,8 @@ class Engine:
             if not signal:
                 continue
 
-            # KILL SWITCH CHECK
-            allow = self.killswitch.evaluate(
-                name,
-                ev=signal["expected_value"],
-                drawdown=5,   # placeholder (upgrade later)
-                sharpe=1.0
-            )
-
-            if not allow:
-                continue
-
-            # weight injection
-            weight = self.weights.weights.get(name, 1)
-
-            signal["weight"] = weight
-            signal["strategy"] = name
-
             signals.append(signal)
 
-        # =====================================
-        # VOTING ENGINE
-        # =====================================
         decision = self.voting.combine(signals)
 
         if not decision:
@@ -94,59 +76,39 @@ class Engine:
         direction = decision["direction"]
         score = decision["score"]
 
-        # =====================================
-        # RISK ENGINE
-        # =====================================
-        volatility = 1.0
+        # ----------------------------
+        # EXECUTION SIMULATION
+        # ----------------------------
+        executed_price = self.slippage.apply(price, direction)
 
-        size = self.risk.position_size(
-            self.balance,
-            kelly=0.2,
-            volatility=volatility
-        )
-
-        print("\n--- TRADE SIGNAL ---")
-        print("REGIME:", regime)
-        print("DIRECTION:", direction)
-        print("SCORE:", score)
-        print("SIZE:", size)
-
-        # =====================================
-        # SIMULATED RESULT HOOK (replace with broker later)
-        # =====================================
+        # fake PnL model (replace with broker later)
         import random
-        pnl = random.uniform(-10, 15)
-        win = pnl > 0
+        pnl = random.uniform(-12, 18)
 
         self.balance += pnl
 
-        # update peak balance
-        if self.balance > self.peak_balance:
-            self.peak_balance = self.balance
+        # ----------------------------
+        # DRIFT DETECTION
+        # ----------------------------
+        actual = pnl
+        drift = self.drift.detect(self.expected_return, actual)
 
-        # =====================================
-        # UPDATE PERFORMANCE SYSTEMS
-        # =====================================
-        for s in signals:
-            self.performance.record(s["strategy"], win)
+        if self.drift.is_broken(drift):
+            print("🚨 STRATEGY EDGE BROKEN - REDUCING EXPOSURE")
 
-        perf = self.performance.performance()
+        # ----------------------------
+        # EDGE DECAY TRACKING
+        # ----------------------------
+        self.edge.update("portfolio", pnl)
 
-        self.weights.update(perf)
-
-        # =====================================
-        # DATABASE LOGGING
-        # =====================================
-        for s in signals:
-
-            self.db.log_trade(
-                strategy=s["strategy"],
-                direction=direction,
-                confidence=s["confidence"],
-                score=score,
-                regime=regime,
-                pnl=pnl
-            )
-
+        # ----------------------------
+        # LOG OUTPUT
+        # ----------------------------
+        print("\n--- V17 TRADE ---")
+        print("REGIME:", regime)
+        print("EXEC PRICE:", executed_price)
+        print("DIRECTION:", direction)
+        print("SCORE:", score)
+        print("PNL:", pnl)
+        print("DRIFT:", drift)
         print("BALANCE:", self.balance)
-        print("WEIGHTS:", self.weights.weights)
