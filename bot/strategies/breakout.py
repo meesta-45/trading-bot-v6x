@@ -1,28 +1,27 @@
-import statistics
-
-
 class BreakoutStrategy:
 
     def generate(self, prices):
 
-        if len(prices) < 20:
+        if len(prices) < 30:
             return None
 
-        high = max(prices[-20:])
-        low = min(prices[-20:])
+        high = max(prices[-30:])
+        low = min(prices[-30:])
         last = prices[-1]
 
-        if last > high * 0.999:
+        if last >= high:
+
             return {
-                "direction": "RISE",
-                "confidence": 0.75,
+                "direction": "LONG",
+                "confidence": 0.8,
                 "expected_value": 1.3
             }
 
-        if last < low * 1.001:
+        if last <= low:
+
             return {
-                "direction": "FALL",
-                "confidence": 0.75,
+                "direction": "SHORT",
+                "confidence": 0.8,
                 "expected_value": 1.3
             }
 
