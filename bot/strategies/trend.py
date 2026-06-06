@@ -5,23 +5,29 @@ class TrendStrategy:
         if len(prices) < 30:
             return None
 
-        recent = prices[-20:]
+        short = sum(prices[-5:]) / 5
+        mid = sum(prices[-15:]) / 15
+        long = sum(prices[-30:]) / 30
 
-        ema_fast = sum(recent[-5:]) / 5
-        ema_slow = sum(recent[-20:]) / 20
+        bullish = short > mid > long
+        bearish = short < mid < long
 
-        if ema_fast > ema_slow:
+        diff = abs(short - long)
+
+        strength = min(1.0, diff / long * 10)
+
+        if bullish:
 
             return {
                 "direction": "BUY",
-                "score": min(1.0, (ema_fast - ema_slow) / ema_slow * 10)
+                "score": strength
             }
 
-        elif ema_fast < ema_slow:
+        if bearish:
 
             return {
                 "direction": "SELL",
-                "score": min(1.0, (ema_slow - ema_fast) / ema_slow * 10)
+                "score": strength
             }
 
         return None
