@@ -1,7 +1,9 @@
 from collections import deque
+from datetime import datetime
 import random
 
 from bot.regime.detector import MarketRegime
+
 from bot.core.mode_controller import ModeController
 from bot.core.instruments import INSTRUMENTS
 
@@ -16,12 +18,18 @@ from bot.portfolio.alpha_engine import AlphaEngine
 from bot.risk.risk_engine import RiskEngine
 from bot.risk.vol_target import VolatilityTarget
 from bot.risk.drawdown_guard import DrawdownGuard
+from bot.risk.tp_sl_engine import TPSLEngine
 
 from bot.analysis.pnl_tracker import PnLTracker
 from bot.analysis.drift_monitor import DriftMonitor
 from bot.analysis.walk_forward import WalkForward
+from bot.analysis.reversal_detector import ReversalDetector
 
 from bot.risk.volatility_engine import VolatilityEngine
+
+from bot.execution.position import Position
+from bot.execution.position_manager import PositionManager
+from bot.execution.hold_engine import HoldEngine
 
 
 class Engine:
@@ -30,47 +38,84 @@ class Engine:
 
         self.prices = deque(maxlen=1000)
 
+        # =====================================
+        # MODE CONTROL
+        # =====================================
         self.mode = ModeController()
+
+        # DEFAULT MODE
         self.mode.set_mode("FOREX")
 
+        # =====================================
+        # REGIME
+        # =====================================
         self.regime = MarketRegime()
 
+        # =====================================
+        # STRATEGIES
+        # =====================================
         self.strategies = {
             "trend": TrendStrategy(),
             "mean_reversion": MeanReversionStrategy(),
             "breakout": BreakoutStrategy()
         }
 
+        # =====================================
+        # PORTFOLIO SYSTEMS
+        # =====================================
         self.voting = VotingEngine()
 
+        self.correlation = CorrelationEngine()
+
+        self.alpha = AlphaEngine()
+
+        # =====================================
+        # RISK SYSTEMS
+        # =====================================
         self.risk = RiskEngine()
+
         self.vol_target = VolatilityTarget()
 
         self.drawdown = DrawdownGuard()
 
-        self.pnl_tracker = PnLTracker()
-
-        self.correlation = CorrelationEngine()
-        self.alpha = AlphaEngine()
-
-        self.drift = DriftMonitor()
-        self.walk_forward = WalkForward()
-
         self.vol_engine = VolatilityEngine()
 
+        self.tp_sl = TPSLEngine()
+
+        # =====================================
+        # ANALYTICS
+        # =====================================
+        self.pnl_tracker = PnLTracker()
+
+        self.drift = DriftMonitor()
+
+        self.walk_forward = WalkForward()
+
+        self.reversal = ReversalDetector()
+
+        # =====================================
+        # POSITION MANAGEMENT
+        # =====================================
+        self.positions = PositionManager()
+
+        self.hold_engine = HoldEngine()
+
+        # =====================================
+        # ACCOUNT
+        # =====================================
         self.balance = 10000
 
         self.expected_return = 5
 
     # =====================================
-    # MARKET MODE CONTROL
+    # SWITCH MARKET MODE
     # =====================================
     def set_market_mode(self, mode):
 
         self.mode.set_mode(mode)
 
     # =====================================
-    # MAIN LOOP
+    # MAIN ENGINE LOOP
     # =====================================
     def on_price(self, price):
 
@@ -78,6 +123,128 @@ class Engine:
 
         print("\nLIVE PRICE:", price)
 
+        # =====================================
+        # MONITOR OPEN POSITIONS
+        # =====================================
+        for position in self.positions.active_positions():
+
+            # LONG POSITIONS
+            if position.direction == "LONG":
+
+                if price >= position.take_profit:
+
+                    print("\n✅ TAKE PROFIT HIT")
+
+                    profit = 20
+
+                    self.balance += profit
+
+                    self.positions.close_position(
+                        position
+                    )
+
+                    print(
+                        "BALANCE:",
+                        round(self.balance, 2)
+                    )
+
+                    continue
+
+                elif price <= position.stop_loss:
+
+                    print("\n❌ STOP LOSS HIT")
+
+                    loss = 15
+
+                    self.balance -= loss
+
+                    self.positions.close_position(
+                        position
+                    )
+
+                    print(
+                        "BALANCE:",
+                        round(self.balance, 2)
+                    )
+
+                    continue
+
+            # SHORT POSITIONS
+            elif position.direction == "SHORT":
+
+                if price <= position.take_profit:
+
+                    print("\n✅ TAKE PROFIT HIT")
+
+                    profit = 20
+
+                    self.balance += profit
+
+                    self.positions.close_position(
+                        position
+                    )
+
+                    print(
+                        "BALANCE:",
+                        round(self.balance, 2)
+                    )
+
+                    continue
+
+                elif price >= position.stop_loss:
+
+                    print("\n❌ STOP LOSS HIT")
+
+                    loss = 15
+
+                    self.balance -= loss
+
+                    self.positions.close_position(
+                        position
+                    )
+
+                    print(
+                        "BALANCE:",
+                        round(self.balance, 2)
+                    )
+
+                    continue
+
+            # =====================================
+            # REVERSAL EXIT
+            # =====================================
+            if self.reversal.detect(
+                list(self.prices)
+            ):
+
+                print(
+                    "\n⚠ REVERSAL DETECTED — EXITING POSITION"
+                )
+
+                self.positions.close_position(
+                    position
+                )
+
+                continue
+
+            # =====================================
+            # TIME EXIT
+            # =====================================
+            if position.expired():
+
+                print(
+                    "\n⏰ POSITION HOLD TIME EXPIRED"
+                )
+
+                self.positions.close_position(
+                    position
+                )
+
+                continue
+
+        # =====================================
+        # WARMUP
+        # =====================================
         if len(self.prices) < 120:
 
             print(
@@ -94,13 +261,21 @@ class Engine:
 
         regime = self.regime.detect(prices)
 
-        print("\n======================")
+        print("\n==========================")
+        print("TIME:", datetime.utcnow())
         print("MODE:", mode)
         print("REGIME:", regime)
         print("BALANCE:", round(self.balance, 2))
+        print(
+            "ACTIVE POSITIONS:",
+            len(
+                self.positions.active_positions()
+            )
+        )
+        print("==========================")
 
         # =====================================
-        # DRAWDOWN CONTROL
+        # DRAWDOWN PROTECTION
         # =====================================
         self.drawdown.update_peak(
             self.balance
@@ -111,10 +286,23 @@ class Engine:
         ):
 
             print(
-                "🚨 MAX DRAWDOWN HIT"
+                "\n🚨 MAXIMUM DRAWDOWN REACHED"
             )
 
             return
+
+        # =====================================
+        # MODE INSTRUMENTS
+        # =====================================
+        symbols = INSTRUMENTS.get(
+            mode,
+            []
+        )
+
+        print(
+            "MODE INSTRUMENTS:",
+            symbols
+        )
 
         # =====================================
         # STRATEGY SIGNALS
@@ -123,35 +311,73 @@ class Engine:
 
         for name, strat in self.strategies.items():
 
-            signal = strat.generate(prices)
+            signal = strat.generate(
+                prices
+            )
 
             print(
-                f"STRATEGY [{name}]",
+                f"STRATEGY [{name}] =>",
                 signal
             )
 
-            if signal:
+            if not signal:
+                continue
 
-                signal["strategy"] = name
+            # =====================================
+            # MODE FILTERING
+            # =====================================
+            if mode == "FOREX":
 
-                signals.append(signal)
+                if name == "mean_reversion":
+                    continue
 
+            elif mode == "CRYPTO":
+
+                if name == "mean_reversion":
+                    continue
+
+            elif mode == "SYNTHETIC":
+
+                if name == "breakout":
+                    continue
+
+            signal["strategy"] = name
+
+            signals.append(signal)
+
+        # =====================================
+        # VOTING ENGINE
+        # =====================================
         decision = self.voting.combine(
             signals
         )
 
-        print("VOTING:", decision)
+        print("\nVOTING RESULT:")
+        print(decision)
 
         if not decision:
 
             print("NO TRADE")
+
             return
 
         direction = decision["direction"]
+
         score = decision["score"]
 
         # =====================================
-        # VOLATILITY
+        # LOW EDGE FILTER
+        # =====================================
+        if score < 0.5:
+
+            print(
+                "TRADE REJECTED (LOW EDGE)"
+            )
+
+            return
+
+        # =====================================
+        # VOLATILITY CALCULATION
         # =====================================
         returns = [
             prices[i] - prices[i - 1]
@@ -165,8 +391,13 @@ class Engine:
             returns
         )
 
+        print(
+            "VOLATILITY:",
+            round(vol, 4)
+        )
+
         # =====================================
-        # VOL TARGETING
+        # POSITION SIZE
         # =====================================
         target_size = (
             self.vol_target.target_position(
@@ -175,24 +406,75 @@ class Engine:
             )
         )
 
-        # =====================================
-        # EXECUTION SIMULATION
-        # =====================================
-        pnl = random.uniform(
-            -20,
-            25
+        print(
+            "TARGET POSITION SIZE:",
+            round(target_size, 2)
         )
 
-        self.balance += pnl
+        # =====================================
+        # HOLD TIME ENGINE
+        # =====================================
+        hold_minutes = (
+            self.hold_engine.calculate(
+                vol
+            )
+        )
+
+        print(
+            "HOLD TIME:",
+            hold_minutes,
+            "MINUTES"
+        )
+
+        # =====================================
+        # TP/SL CALCULATION
+        # =====================================
+        if direction == "BUY":
+
+            trade_direction = "LONG"
+
+        else:
+
+            trade_direction = "SHORT"
+
+        tp, sl = self.tp_sl.generate(
+            trade_direction,
+            price,
+            vol
+        )
+
+        # =====================================
+        # CREATE POSITION
+        # =====================================
+        position = Position(
+            direction=trade_direction,
+            entry_price=price,
+            size=target_size,
+            stop_loss=sl,
+            take_profit=tp,
+            hold_minutes=hold_minutes
+        )
+
+        # =====================================
+        # OPEN POSITION
+        # =====================================
+        self.positions.open_position(
+            position
+        )
 
         # =====================================
         # PNL TRACKING
         # =====================================
+        simulated_pnl = random.uniform(
+            -5,
+            10
+        )
+
         for s in signals:
 
             self.pnl_tracker.record(
                 s["strategy"],
-                pnl
+                simulated_pnl
             )
 
         # =====================================
@@ -202,7 +484,9 @@ class Engine:
 
         for s in self.strategies:
 
-            avg = self.pnl_tracker.avg_pnl(s)
+            avg = self.pnl_tracker.avg_pnl(
+                s
+            )
 
             alpha_scores[s] = (
                 self.alpha.score(
@@ -213,29 +497,32 @@ class Engine:
             )
 
         print(
-            "ALPHA SCORES:",
-            alpha_scores
+            "\nALPHA SCORES:"
         )
+
+        print(alpha_scores)
 
         # =====================================
         # DRIFT DETECTION
         # =====================================
         drift = self.drift.deviation(
             self.expected_return,
-            pnl
+            simulated_pnl
         )
 
         if self.drift.unstable(drift):
 
             print(
-                "⚠ PERFORMANCE DRIFT DETECTED"
+                "\n⚠ PERFORMANCE DRIFT DETECTED"
             )
 
         # =====================================
         # WALK FORWARD
         # =====================================
-        wf_sets = self.walk_forward.split(
-            prices
+        wf_sets = (
+            self.walk_forward.split(
+                prices
+            )
         )
 
         print(
@@ -244,18 +531,28 @@ class Engine:
         )
 
         # =====================================
-        # FINAL OUTPUT
+        # FINAL TRADE OUTPUT
         # =====================================
-        print("\n🚀 TRADE EXECUTED")
-        print("DIRECTION:", direction)
-        print("SCORE:", round(score, 4))
-        print("VOL:", round(vol, 4))
+        print("\n🚀 POSITION OPENED")
+        print("DIRECTION:", trade_direction)
         print(
-            "TARGET SIZE:",
+            "ENTRY:",
+            round(price, 4)
+        )
+        print(
+            "TAKE PROFIT:",
+            round(tp, 4)
+        )
+        print(
+            "STOP LOSS:",
+            round(sl, 4)
+        )
+        print(
+            "SIZE:",
             round(target_size, 2)
         )
-        print("PNL:", round(pnl, 2))
         print(
-            "BALANCE:",
-            round(self.balance, 2)
+            "HOLD:",
+            hold_minutes,
+            "MINUTES"
         )
