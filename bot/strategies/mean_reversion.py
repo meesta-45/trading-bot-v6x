@@ -5,33 +5,36 @@ class MeanReversionStrategy:
 
     def generate(self, prices):
 
-        if len(prices) < 30:
+        if len(prices) < 20:
             return None
 
         recent = prices[-20:]
 
         mean = sum(recent) / len(recent)
+
         std = statistics.stdev(recent)
 
         if std == 0:
             return None
 
-        last_price = prices[-1]
+        last = prices[-1]
 
-        z_score = (last_price - mean) / std
+        z = (last - mean) / std
 
-        if z_score > 1:
+        strength = min(1.0, abs(z) / 3)
+
+        if z > 0.8:
 
             return {
                 "direction": "SELL",
-                "score": min(1.0, abs(z_score) / 3)
+                "score": strength
             }
 
-        elif z_score < -1:
+        if z < -0.8:
 
             return {
                 "direction": "BUY",
-                "score": min(1.0, abs(z_score) / 3)
+                "score": strength
             }
 
         return None
