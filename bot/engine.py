@@ -1,6 +1,5 @@
 from collections import deque
 
-from bot.regime.detector import MarketRegime
 from bot.core.mode_controller import ModeController
 
 from bot.strategies.trend import TrendStrategy
@@ -30,8 +29,6 @@ class Engine:
         self.mode = ModeController()
         self.mode.set_mode("FOREX")
 
-        self.regime = MarketRegime()
-
         self.strategies = {
             "trend": TrendStrategy(),
             "mean_reversion": MeanReversionStrategy(),
@@ -51,10 +48,20 @@ class Engine:
         self.tp_sl = TPSLEngine()
         self.reversal = ReversalDetector()
 
+        # ================= ACCOUNT =================
         self.balance = 10000
 
+        # ================= CONTROL =================
+        self.cooldown = 0
+        self.cooldown_limit = 5
+        self.max_positions = 2
+
+        # performance tracking hooks (for v25 PnL engine)
+        self.wins = 0
+        self.losses = 0
+
     # =====================================================
-    # MICRO REGIME DETECTOR (KEY FIX)
+    # MICRO REGIME DETECTOR
     # =====================================================
     def micro_regime(self, prices):
 
@@ -86,13 +93,13 @@ class Engine:
         return "SWING"
 
     # =====================================================
-    # HORIZON CLASSIFIER (FIXED MULTI-SPEED)
+    # HORIZON SELECTION ENGINE (FIXED MULTI-SPEED)
     # =====================================================
     def classify_horizon(self, vol, score, prices):
 
         regime = self.micro_regime(prices)
 
-        # ================= SCALP =================
+        # ---------------- SCALP ----------------
         if regime == "SCALP":
 
             if score < 0.55:
@@ -106,42 +113,36 @@ class Engine:
 
             return "SCALP_1M"
 
-        # ================= STRUCTURE =================
+        # ---------------- STRUCTURE ----------------
         if regime == "STRUCTURE":
             return "SHORT_5M"
 
-        # ================= SWING =================
+        # ---------------- SWING ----------------
         return "SWING_15M"
 
     # =====================================================
-    # HOLD TIME MAP
+    # HOLD TIME MAPPING
     # =====================================================
     def horizon_to_minutes(self, horizon):
 
-        if horizon == "SCALP_5S":
-            return 0.083
-
-        if horizon == "SCALP_15S":
-            return 0.25
-
-        if horizon == "SCALP_30S":
-            return 0.5
-
-        if horizon == "SCALP_1M":
-            return 1
-
-        if horizon == "SHORT_5M":
-            return 5
-
-        return 15
+        return {
+            "SCALP_5S": 0.083,
+            "SCALP_15S": 0.25,
+            "SCALP_30S": 0.5,
+            "SCALP_1M": 1,
+            "SHORT_5M": 5,
+            "SWING_15M": 15
+        }.get(horizon, 5)
 
     # =====================================================
     # POSITION MANAGEMENT
+    # NOTE: PnL integration will be completed in V25
     # =====================================================
     def _manage_positions(self, price):
 
         for position in list(self.positions.active_positions()):
 
+            # LONG
             if position.direction == "LONG":
 
                 if price >= position.take_profit:
@@ -155,9 +156,10 @@ class Engine:
                     self.positions.close_position(position)
 
                 elif self.reversal.detect(list(self.prices)):
-                    print("⚠ REVERSAL LONG")
+                    print("⚠ REVERSAL EXIT LONG")
                     self.positions.close_position(position)
 
+            # SHORT
             else:
 
                 if price <= position.take_profit:
@@ -171,15 +173,16 @@ class Engine:
                     self.positions.close_position(position)
 
                 elif self.reversal.detect(list(self.prices)):
-                    print("⚠ REVERSAL SHORT")
+                    print("⚠ REVERSAL EXIT SHORT")
                     self.positions.close_position(position)
 
+            # TIME EXIT
             if position.expired():
                 print("⏰ TIME EXIT")
                 self.positions.close_position(position)
 
     # =====================================================
-    # MAIN ENGINE
+    # MAIN ENGINE LOOP
     # =====================================================
     def on_price(self, price):
 
@@ -187,16 +190,24 @@ class Engine:
 
         print("\nLIVE PRICE:", price)
 
+        # manage existing trades first
         self._manage_positions(price)
 
+        # ================= COOLDOWN =================
+        if self.cooldown > 0:
+            print("🧊 COOLDOWN:", self.cooldown)
+            self.cooldown -= 1
+            return
+
+        # ================= WARMUP =================
         if len(self.prices) < 120:
             print("WARMUP:", len(self.prices))
             return
 
         prices = list(self.prices)
 
-        # ================= LIMIT =================
-        if len(self.positions.active_positions()) >= 2:
+        # ================= LIMIT POSITIONS =================
+        if len(self.positions.active_positions()) >= self.max_positions:
             print("MAX POSITIONS ACTIVE")
             return
 
@@ -228,21 +239,20 @@ class Engine:
             [prices[i] - prices[i - 1] for i in range(1, len(prices))]
         )
 
-        # ================= MICRO DECISION =================
+        # ================= HORIZON DECISION =================
         horizon = self.classify_horizon(vol, score, prices)
 
         hold_minutes = self.horizon_to_minutes(horizon)
 
         print("\nMICRO REGIME:", self.micro_regime(prices))
         print("HORIZON:", horizon)
-        print("HOLD TIME:", hold_minutes)
+        print("HOLD:", hold_minutes)
 
-        # ================= RISK =================
+        # ================= CAPITAL ALLOCATION =================
         drawdown = self.drawdown.drawdown(self.balance)
 
         strategy_name = decision.get("strategy", "trend")
 
-        # ================= SIZE =================
         size = self.capital_allocator.allocate(
             base_capital=self.base_capital,
             strategy=strategy_name,
@@ -273,5 +283,4 @@ class Engine:
         print("ENTRY:", price)
         print("TP:", tp)
         print("SL:", sl)
-        print("HORIZON:", horizon)
         print("SIZE:", size)
