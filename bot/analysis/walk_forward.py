@@ -1,16 +1,33 @@
 class WalkForward:
 
-    def split(self, prices, window=100):
+    def split(
+        self,
+        prices,
+        train_size=100,
+        test_size=20
+    ):
 
-        sets = []
+        datasets = []
 
-        for i in range(0, len(prices) - window, 20):
+        step = test_size
 
-            train = prices[i:i + window]
-            test = prices[i + window:i + window + 20]
+        for i in range(
+            0,
+            len(prices) - train_size - test_size,
+            step
+        ):
 
-            if len(test) == 20:
+            train = prices[
+                i:i + train_size
+            ]
 
-                sets.append((train, test))
+            test = prices[
+                i + train_size:
+                i + train_size + test_size
+            ]
 
-        return sets
+            datasets.append(
+                (train, test)
+            )
+
+        return datasets
