@@ -11,7 +11,6 @@ class MeanReversionStrategy:
         recent = prices[-20:]
 
         mean = sum(recent) / len(recent)
-
         std = statistics.stdev(recent)
 
         if std == 0:
@@ -21,16 +20,16 @@ class MeanReversionStrategy:
 
         z = (last - mean) / std
 
-        strength = min(1.0, abs(z) / 3)
+        strength = min(1.0, abs(z) / 2.5)
 
-        if z > 0.8:
+        if z > 0.7:
 
             return {
                 "direction": "SELL",
                 "score": strength
             }
 
-        if z < -0.8:
+        if z < -0.7:
 
             return {
                 "direction": "BUY",
