@@ -1,5 +1,4 @@
 from collections import deque
-import random
 
 from bot.regime.detector import MarketRegime
 from bot.core.mode_controller import ModeController
@@ -27,9 +26,7 @@ class Engine:
 
         self.prices = deque(maxlen=1000)
 
-        # =========================
-        # CORE SYSTEMS
-        # =========================
+        # ================= CORE =================
         self.mode = ModeController()
         self.mode.set_mode("FOREX")
 
@@ -43,53 +40,95 @@ class Engine:
 
         self.voting = VotingEngine()
 
-        # =========================
-        # PORTFOLIO SYSTEMS
-        # =========================
+        # ================= PORTFOLIO =================
         self.capital_allocator = CapitalAllocator()
         self.base_capital = 100
-
         self.positions = PositionManager()
 
-        # =========================
-        # RISK SYSTEMS
-        # =========================
+        # ================= RISK =================
         self.vol_engine = VolatilityEngine()
         self.drawdown = DrawdownGuard()
         self.tp_sl = TPSLEngine()
         self.reversal = ReversalDetector()
 
-        # =========================
-        # ACCOUNT STATE
-        # =========================
         self.balance = 10000
 
     # =====================================================
-    # HORIZON CLASSIFICATION
+    # MICRO REGIME DETECTOR (KEY FIX)
     # =====================================================
-    def classify_horizon(self, vol, score):
+    def micro_regime(self, prices):
 
-        if vol > 2.5 and score < 0.6:
-            return "SCALP_30S"
+        if len(prices) < 20:
+            return "SWING"
 
-        if vol > 1.8 and score < 0.65:
-            return "SCALP_45S"
+        recent = prices[-10:]
 
-        if score < 0.8:
+        changes = [
+            abs(recent[i] - recent[i - 1])
+            for i in range(1, len(recent))
+        ]
+
+        avg_move = sum(changes) / len(changes)
+
+        noise = len([
+            x for x in changes
+            if x < avg_move * 0.5
+        ]) / len(changes)
+
+        momentum = abs(recent[-1] - recent[0])
+
+        if noise > 0.6 and avg_move > 0.5:
+            return "SCALP"
+
+        if momentum > avg_move * 3:
+            return "STRUCTURE"
+
+        return "SWING"
+
+    # =====================================================
+    # HORIZON CLASSIFIER (FIXED MULTI-SPEED)
+    # =====================================================
+    def classify_horizon(self, vol, score, prices):
+
+        regime = self.micro_regime(prices)
+
+        # ================= SCALP =================
+        if regime == "SCALP":
+
+            if score < 0.55:
+                return "SCALP_5S"
+
+            if score < 0.6:
+                return "SCALP_15S"
+
+            if score < 0.7:
+                return "SCALP_30S"
+
+            return "SCALP_1M"
+
+        # ================= STRUCTURE =================
+        if regime == "STRUCTURE":
             return "SHORT_5M"
 
+        # ================= SWING =================
         return "SWING_15M"
 
     # =====================================================
-    # HORIZON TO HOLD TIME
+    # HOLD TIME MAP
     # =====================================================
     def horizon_to_minutes(self, horizon):
+
+        if horizon == "SCALP_5S":
+            return 0.083
+
+        if horizon == "SCALP_15S":
+            return 0.25
 
         if horizon == "SCALP_30S":
             return 0.5
 
-        if horizon == "SCALP_45S":
-            return 0.75
+        if horizon == "SCALP_1M":
+            return 1
 
         if horizon == "SHORT_5M":
             return 5
@@ -103,54 +142,44 @@ class Engine:
 
         for position in list(self.positions.active_positions()):
 
-            # ================= LONG =================
             if position.direction == "LONG":
 
                 if price >= position.take_profit:
-
-                    print("✅ TAKE PROFIT (LONG)")
+                    print("✅ TP LONG")
                     self.balance += 20
                     self.positions.close_position(position)
 
                 elif price <= position.stop_loss:
-
-                    print("❌ STOP LOSS (LONG)")
+                    print("❌ SL LONG")
                     self.balance -= 15
                     self.positions.close_position(position)
 
                 elif self.reversal.detect(list(self.prices)):
-
-                    print("⚠ REVERSAL EXIT (LONG)")
+                    print("⚠ REVERSAL LONG")
                     self.positions.close_position(position)
 
-            # ================= SHORT =================
-            elif position.direction == "SHORT":
+            else:
 
                 if price <= position.take_profit:
-
-                    print("✅ TAKE PROFIT (SHORT)")
+                    print("✅ TP SHORT")
                     self.balance += 20
                     self.positions.close_position(position)
 
                 elif price >= position.stop_loss:
-
-                    print("❌ STOP LOSS (SHORT)")
+                    print("❌ SL SHORT")
                     self.balance -= 15
                     self.positions.close_position(position)
 
                 elif self.reversal.detect(list(self.prices)):
-
-                    print("⚠ REVERSAL EXIT (SHORT)")
+                    print("⚠ REVERSAL SHORT")
                     self.positions.close_position(position)
 
-            # ================= TIME EXIT =================
             if position.expired():
-
                 print("⏰ TIME EXIT")
                 self.positions.close_position(position)
 
     # =====================================================
-    # MAIN ENGINE LOOP
+    # MAIN ENGINE
     # =====================================================
     def on_price(self, price):
 
@@ -158,22 +187,15 @@ class Engine:
 
         print("\nLIVE PRICE:", price)
 
-        # manage open positions first
         self._manage_positions(price)
 
-        # ================= WARMUP =================
         if len(self.prices) < 120:
             print("WARMUP:", len(self.prices))
             return
 
         prices = list(self.prices)
 
-        print("\n======================")
-        print("BALANCE:", self.balance)
-        print("ACTIVE POSITIONS:", len(self.positions.active_positions()))
-        print("======================")
-
-        # ================= POSITION LIMIT =================
+        # ================= LIMIT =================
         if len(self.positions.active_positions()) >= 2:
             print("MAX POSITIONS ACTIVE")
             return
@@ -191,8 +213,6 @@ class Engine:
 
         decision = self.voting.combine(signals)
 
-        print("VOTING:", decision)
-
         if not decision:
             return
 
@@ -208,23 +228,21 @@ class Engine:
             [prices[i] - prices[i - 1] for i in range(1, len(prices))]
         )
 
-        print("VOL:", round(vol, 4))
-
-        # ================= HORIZON SELECTION =================
-        horizon = self.classify_horizon(vol, score)
+        # ================= MICRO DECISION =================
+        horizon = self.classify_horizon(vol, score, prices)
 
         hold_minutes = self.horizon_to_minutes(horizon)
 
+        print("\nMICRO REGIME:", self.micro_regime(prices))
         print("HORIZON:", horizon)
         print("HOLD TIME:", hold_minutes)
 
-        # ================= DRAWNDOWN =================
+        # ================= RISK =================
         drawdown = self.drawdown.drawdown(self.balance)
 
-        # ================= STRATEGY NAME =================
         strategy_name = decision.get("strategy", "trend")
 
-        # ================= CAPITAL ALLOCATION =================
+        # ================= SIZE =================
         size = self.capital_allocator.allocate(
             base_capital=self.base_capital,
             strategy=strategy_name,
@@ -234,14 +252,11 @@ class Engine:
             drawdown=drawdown
         )
 
-        print("POSITION SIZE:", size)
-
-        # ================= TP/SL =================
         trade_direction = "LONG" if direction == "BUY" else "SHORT"
 
         tp, sl = self.tp_sl.generate(trade_direction, price, vol)
 
-        # ================= POSITION CREATION =================
+        # ================= EXECUTION =================
         position = Position(
             direction=trade_direction,
             entry_price=price,
