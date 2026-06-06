@@ -2,11 +2,11 @@ class BreakoutStrategy:
 
     def generate(self, prices):
 
-        if len(prices) < 30:
+        if len(prices) < 20:
             return None
 
-        resistance = max(prices[-20:])
-        support = min(prices[-20:])
+        resistance = max(prices[-15:])
+        support = min(prices[-15:])
 
         last = prices[-1]
 
@@ -17,20 +17,16 @@ class BreakoutStrategy:
 
         if last > resistance:
 
-            strength = (last - resistance) / range_size
-
             return {
                 "direction": "BUY",
-                "score": min(1.0, strength * 2)
+                "score": min(1.0, (last - resistance) / range_size * 2)
             }
 
-        elif last < support:
-
-            strength = (support - last) / range_size
+        if last < support:
 
             return {
                 "direction": "SELL",
-                "score": min(1.0, strength * 2)
+                "score": min(1.0, (support - last) / range_size * 2)
             }
 
         return None
