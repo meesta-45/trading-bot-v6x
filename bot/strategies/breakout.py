@@ -5,24 +5,32 @@ class BreakoutStrategy:
         if len(prices) < 30:
             return None
 
-        high = max(prices[-30:])
-        low = min(prices[-30:])
+        resistance = max(prices[-20:])
+        support = min(prices[-20:])
+
         last = prices[-1]
 
-        if last >= high:
+        range_size = resistance - support
+
+        if range_size == 0:
+            return None
+
+        if last > resistance:
+
+            strength = (last - resistance) / range_size
 
             return {
-                "direction": "LONG",
-                "confidence": 0.8,
-                "expected_value": 1.3
+                "direction": "BUY",
+                "score": min(1.0, strength * 2)
             }
 
-        if last <= low:
+        elif last < support:
+
+            strength = (support - last) / range_size
 
             return {
-                "direction": "SHORT",
-                "confidence": 0.8,
-                "expected_value": 1.3
+                "direction": "SELL",
+                "score": min(1.0, strength * 2)
             }
 
         return None
