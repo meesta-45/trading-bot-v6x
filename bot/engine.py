@@ -9,6 +9,7 @@ from bot.strategies.mean_reversion import MeanReversionStrategy
 from bot.strategies.breakout import BreakoutStrategy
 
 from bot.portfolio.voting import VotingEngine
+from bot.portfolio.capital_allocator import CapitalAllocator
 
 from bot.risk.volatility_engine import VolatilityEngine
 from bot.risk.drawdown_guard import DrawdownGuard
@@ -26,6 +27,9 @@ class Engine:
 
         self.prices = deque(maxlen=1000)
 
+        # =========================
+        # CORE SYSTEMS
+        # =========================
         self.mode = ModeController()
         self.mode.set_mode("FOREX")
 
@@ -39,32 +43,30 @@ class Engine:
 
         self.voting = VotingEngine()
 
+        # =========================
+        # PORTFOLIO SYSTEMS
+        # =========================
+        self.capital_allocator = CapitalAllocator()
+        self.base_capital = 100
+
         self.positions = PositionManager()
 
+        # =========================
+        # RISK SYSTEMS
+        # =========================
         self.vol_engine = VolatilityEngine()
-        self.tp_sl = TPSLEngine()
         self.drawdown = DrawdownGuard()
+        self.tp_sl = TPSLEngine()
         self.reversal = ReversalDetector()
 
+        # =========================
+        # ACCOUNT STATE
+        # =========================
         self.balance = 10000
 
-        # =========================
-        # V22 CONTROL SYSTEM
-        # =========================
-        self.cooldown = 0
-        self.cooldown_limit = 5
-
-        self.trade_count = 0
-        self.trade_batch_limit = 8
-
-        self.batch_profit = 0
-        self.batch_profit_target = 40
-
-        self.max_positions = 2
-
-    # =========================================================
-    # MULTI-HORIZON CLASSIFIER
-    # =========================================================
+    # =====================================================
+    # HORIZON CLASSIFICATION
+    # =====================================================
     def classify_horizon(self, vol, score):
 
         if vol > 2.5 and score < 0.6:
@@ -78,9 +80,9 @@ class Engine:
 
         return "SWING_15M"
 
-    # =========================================================
-    # HORIZON → HOLD TIME
-    # =========================================================
+    # =====================================================
+    # HORIZON TO HOLD TIME
+    # =====================================================
     def horizon_to_minutes(self, horizon):
 
         if horizon == "SCALP_30S":
@@ -94,89 +96,70 @@ class Engine:
 
         return 15
 
-    # =========================================================
-    # HORIZON → TP/SL SCALING
-    # =========================================================
-    def scale_tp_sl(self, horizon, tp, sl):
-
-        if horizon == "SCALP_30S":
-            return tp * 0.3, sl * 0.3
-
-        if horizon == "SCALP_45S":
-            return tp * 0.5, sl * 0.5
-
-        if horizon == "SHORT_5M":
-            return tp, sl
-
-        return tp * 1.6, sl * 1.2
-
-    # =========================================================
+    # =====================================================
     # POSITION MANAGEMENT
-    # =========================================================
+    # =====================================================
     def _manage_positions(self, price):
 
         for position in list(self.positions.active_positions()):
 
-            # LONG
+            # ================= LONG =================
             if position.direction == "LONG":
 
                 if price >= position.take_profit:
-                    print("✅ TP HIT (LONG)")
+
+                    print("✅ TAKE PROFIT (LONG)")
                     self.balance += 20
-                    self.batch_profit += 20
                     self.positions.close_position(position)
 
                 elif price <= position.stop_loss:
-                    print("❌ SL HIT (LONG)")
+
+                    print("❌ STOP LOSS (LONG)")
                     self.balance -= 15
-                    self.batch_profit -= 15
                     self.positions.close_position(position)
 
                 elif self.reversal.detect(list(self.prices)):
+
                     print("⚠ REVERSAL EXIT (LONG)")
                     self.positions.close_position(position)
 
-            # SHORT
+            # ================= SHORT =================
             elif position.direction == "SHORT":
 
                 if price <= position.take_profit:
-                    print("✅ TP HIT (SHORT)")
+
+                    print("✅ TAKE PROFIT (SHORT)")
                     self.balance += 20
-                    self.batch_profit += 20
                     self.positions.close_position(position)
 
                 elif price >= position.stop_loss:
-                    print("❌ SL HIT (SHORT)")
+
+                    print("❌ STOP LOSS (SHORT)")
                     self.balance -= 15
-                    self.batch_profit -= 15
                     self.positions.close_position(position)
 
                 elif self.reversal.detect(list(self.prices)):
+
                     print("⚠ REVERSAL EXIT (SHORT)")
                     self.positions.close_position(position)
 
-            # TIME EXIT
+            # ================= TIME EXIT =================
             if position.expired():
+
                 print("⏰ TIME EXIT")
                 self.positions.close_position(position)
 
-    # =========================================================
-    # MAIN LOOP
-    # =========================================================
+    # =====================================================
+    # MAIN ENGINE LOOP
+    # =====================================================
     def on_price(self, price):
 
         self.prices.append(price)
 
         print("\nLIVE PRICE:", price)
 
-        # manage open trades first
+        # manage open positions first
         self._manage_positions(price)
-
-        # ================= COOLDOWN =================
-        if self.cooldown > 0:
-            print("🧊 COOLDOWN:", self.cooldown)
-            self.cooldown -= 1
-            return
 
         # ================= WARMUP =================
         if len(self.prices) < 120:
@@ -185,13 +168,13 @@ class Engine:
 
         prices = list(self.prices)
 
-        print("\n====================")
+        print("\n======================")
         print("BALANCE:", self.balance)
         print("ACTIVE POSITIONS:", len(self.positions.active_positions()))
-        print("====================")
+        print("======================")
 
         # ================= POSITION LIMIT =================
-        if len(self.positions.active_positions()) >= self.max_positions:
+        if len(self.positions.active_positions()) >= 2:
             print("MAX POSITIONS ACTIVE")
             return
 
@@ -227,7 +210,7 @@ class Engine:
 
         print("VOL:", round(vol, 4))
 
-        # ================= HORIZON DECISION =================
+        # ================= HORIZON SELECTION =================
         horizon = self.classify_horizon(vol, score)
 
         hold_minutes = self.horizon_to_minutes(horizon)
@@ -235,17 +218,34 @@ class Engine:
         print("HORIZON:", horizon)
         print("HOLD TIME:", hold_minutes)
 
+        # ================= DRAWNDOWN =================
+        drawdown = self.drawdown.drawdown(self.balance)
+
+        # ================= STRATEGY NAME =================
+        strategy_name = decision.get("strategy", "trend")
+
+        # ================= CAPITAL ALLOCATION =================
+        size = self.capital_allocator.allocate(
+            base_capital=self.base_capital,
+            strategy=strategy_name,
+            horizon=horizon,
+            confidence=score,
+            volatility=vol,
+            drawdown=drawdown
+        )
+
+        print("POSITION SIZE:", size)
+
         # ================= TP/SL =================
         trade_direction = "LONG" if direction == "BUY" else "SHORT"
 
         tp, sl = self.tp_sl.generate(trade_direction, price, vol)
-        tp, sl = self.scale_tp_sl(horizon, tp, sl)
 
-        # ================= POSITION OPEN =================
+        # ================= POSITION CREATION =================
         position = Position(
             direction=trade_direction,
             entry_price=price,
-            size=1,
+            size=size,
             stop_loss=sl,
             take_profit=tp,
             hold_minutes=hold_minutes
@@ -259,17 +259,4 @@ class Engine:
         print("TP:", tp)
         print("SL:", sl)
         print("HORIZON:", horizon)
-
-        # ================= COOLDOWN LOGIC =================
-        self.trade_count += 1
-
-        if self.batch_profit >= self.batch_profit_target:
-            print("🎯 PROFIT TARGET HIT → COOLDOWN")
-            self.cooldown = self.cooldown_limit
-            self.batch_profit = 0
-            self.trade_count = 0
-
-        elif self.trade_count >= self.trade_batch_limit:
-            print("📊 TRADE LIMIT → COOLDOWN")
-            self.cooldown = self.cooldown_limit
-            self.trade_count = 0
+        print("SIZE:", size)
