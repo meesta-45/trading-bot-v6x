@@ -29,6 +29,8 @@ class Engine:
 
         self.prices = deque(maxlen=1000)
 
+        print("🔥 V27 ENGINE ACTIVE")
+
         self.mode = ModeController()
         self.mode.set_mode("FOREX")
 
@@ -39,7 +41,6 @@ class Engine:
         }
 
         self.voting = VotingEngine()
-
         self.ai = AdaptiveAI()
 
         self.capital_allocator = CapitalAllocator()
@@ -55,16 +56,20 @@ class Engine:
         self.orderflow = OrderFlowEngine()
 
         self.balance = 10000
-
         self.wins = 0
         self.losses = 0
 
+        # =====================================
+        # CONTROL SYSTEM (IMPORTANT FIX)
+        # =====================================
         self.cooldown = 0
-        self.cooldown_limit = 5
+        self.cooldown_limit = 3
+
         self.max_positions = 2
 
-    # =====================================================
-    # MICRO REGIME DETECTOR
+        # prevents infinite warmup blocking
+        self.min_data = 30
+
     # =====================================================
     def micro_regime(self, prices):
 
@@ -80,14 +85,11 @@ class Engine:
 
         avg_move = sum(changes) / len(changes)
 
-        noise = len([
-            x for x in changes
-            if x < avg_move * 0.5
-        ]) / len(changes)
+        noise = len([x for x in changes if x < avg_move * 0.5]) / len(changes)
 
         momentum = abs(recent[-1] - recent[0])
 
-        if noise > 0.6 and avg_move > 0.5:
+        if noise > 0.6:
             return "SCALP"
 
         if momentum > avg_move * 3:
@@ -96,42 +98,7 @@ class Engine:
         return "SWING"
 
     # =====================================================
-    def classify_horizon(self, vol, score, prices):
-
-        regime = self.micro_regime(prices)
-
-        if regime == "SCALP":
-
-            if score < 0.55:
-                return "SCALP_5S"
-
-            if score < 0.60:
-                return "SCALP_15S"
-
-            if score < 0.70:
-                return "SCALP_30S"
-
-            return "SCALP_1M"
-
-        if regime == "STRUCTURE":
-            return "SHORT_5M"
-
-        return "SWING_15M"
-
-    # =====================================================
-    def horizon_to_minutes(self, horizon):
-
-        return {
-            "SCALP_5S": 0.083,
-            "SCALP_15S": 0.25,
-            "SCALP_30S": 0.5,
-            "SCALP_1M": 1,
-            "SHORT_5M": 5,
-            "SWING_15M": 15
-        }.get(horizon, 5)
-
-    # =====================================================
-    def _safe_signal_score(self, signal):
+    def _safe_score(self, signal):
 
         if not signal:
             return None
@@ -139,59 +106,52 @@ class Engine:
         if "score" in signal:
             return signal["score"]
 
-        if "confidence" in signal:
-            return signal["confidence"]
-
-        return 0.55
+        return 0.5
 
     # =====================================================
     def _manage_positions(self, price):
 
-        for position in list(self.positions.active_positions()):
+        for p in list(self.positions.active_positions()):
 
             pnl = 0
             closed = False
 
-            if position.direction == "LONG":
+            if p.direction == "LONG":
 
-                if price >= position.take_profit:
-                    pnl = (price - position.entry_price) * position.size
+                if price >= p.take_profit:
+                    pnl = (price - p.entry_price) * p.size
                     closed = True
                     print("✅ TP LONG")
 
-                elif price <= position.stop_loss:
-                    pnl = (price - position.entry_price) * position.size
+                elif price <= p.stop_loss:
+                    pnl = (price - p.entry_price) * p.size
                     closed = True
                     print("❌ SL LONG")
 
                 elif self.reversal.detect(list(self.prices)):
-                    pnl = (price - position.entry_price) * position.size
+                    pnl = (price - p.entry_price) * p.size
                     closed = True
                     print("⚠ REVERSAL LONG")
 
             else:
 
-                if price <= position.take_profit:
-                    pnl = (position.entry_price - price) * position.size
+                if price <= p.take_profit:
+                    pnl = (p.entry_price - price) * p.size
                     closed = True
                     print("✅ TP SHORT")
 
-                elif price >= position.stop_loss:
-                    pnl = (position.entry_price - price) * position.size
+                elif price >= p.stop_loss:
+                    pnl = (p.entry_price - price) * p.size
                     closed = True
                     print("❌ SL SHORT")
 
                 elif self.reversal.detect(list(self.prices)):
-                    pnl = (position.entry_price - price) * position.size
+                    pnl = (p.entry_price - price) * p.size
                     closed = True
                     print("⚠ REVERSAL SHORT")
 
-            if position.expired():
-                pnl = (
-                    (price - position.entry_price)
-                    if position.direction == "LONG"
-                    else (position.entry_price - price)
-                ) * position.size
+            if p.expired():
+                pnl = (price - p.entry_price) * p.size if p.direction == "LONG" else (p.entry_price - price) * p.size
                 closed = True
                 print("⏰ TIME EXIT")
 
@@ -204,16 +164,13 @@ class Engine:
                 else:
                     self.losses += 1
 
-                self.ai.update_strategy(
-                    getattr(position, "strategy", "trend"),
-                    pnl
-                )
+                self.ai.update_strategy(getattr(p, "strategy", "trend"), pnl)
 
-                self.positions.close_position(position)
+                self.positions.close_position(p)
 
                 print("📊 CLOSED TRADE")
                 print("PNL:", round(pnl, 2))
-                print("BALANCE:", round(self.balance, 2))
+                print("BAL:", round(self.balance, 2))
 
     # =====================================================
     def on_price(self, price):
@@ -221,125 +178,135 @@ class Engine:
         self.prices.append(price)
 
         print("\nLIVE PRICE:", price)
+        print("DATA SIZE:", len(self.prices))
 
+        # ALWAYS manage positions
         self._manage_positions(price)
 
+        # cooldown logic
         if self.cooldown > 0:
             self.cooldown -= 1
-            print("COOLDOWN:", self.cooldown)
+            print("🧊 COOLDOWN:", self.cooldown)
             return
 
-        if len(self.prices) < 120:
-            return
-
-        if len(self.positions.active_positions()) >= self.max_positions:
+        # =====================================
+        # IMPORTANT FIX: DO NOT BLOCK TOO HARD
+        # =====================================
+        if len(self.prices) < self.min_data:
+            print("⏳ WARMUP MODE:", len(self.prices), "/", self.min_data)
             return
 
         prices = list(self.prices)
 
+        # =====================================
+        # STRATEGY EXECUTION VISIBILITY FIX
+        # =====================================
         signals = []
 
-        # =====================================================
-        # STRATEGY ENGINE (SAFE)
-        # =====================================================
+        print("🚀 ENTERING STRATEGY LAYER")
+
         for name, strat in self.strategies.items():
+
+            print("📊 RUNNING STRATEGY:", name)
 
             signal = strat.generate(prices)
 
             if not signal:
+                print("❌ NO SIGNAL:", name)
                 continue
 
-            score = self._safe_signal_score(signal)
+            score = self._safe_score(signal)
 
             weight = self.ai.weight(name)
 
-            signal["score"] = score * weight
-            signal["strategy"] = name
+            final_score = score * weight
 
-            signals.append(signal)
+            print(
+                "✔ SIGNAL:",
+                name,
+                "RAW:",
+                score,
+                "WEIGHT:",
+                weight,
+                "FINAL:",
+                round(final_score, 3)
+            )
 
-            print("AI WEIGHT:", name, round(weight, 2))
+            signals.append({
+                "direction": signal["direction"],
+                "score": final_score,
+                "strategy": name
+            })
+
+        print("📡 SIGNAL COUNT:", len(signals))
 
         decision = self.voting.combine(signals)
 
-        print("VOTING:", decision)
+        print("🧠 VOTING RESULT:", decision)
 
         if not decision:
+            print("❌ NO DECISION FROM VOTING")
             return
 
         direction = decision["direction"]
         score = decision["score"]
 
+        # =====================================
+        # VOLATILITY
+        # =====================================
         vol = self.vol_engine.compute(
             [prices[i] - prices[i - 1] for i in range(1, len(prices))]
         )
 
-        threshold = self.ai.confidence_threshold(
-            vol,
-            self.micro_regime(prices)
-        )
+        print("📉 VOL:", vol)
 
-        print("THRESHOLD:", threshold)
+        threshold = self.ai.confidence_threshold(vol, self.micro_regime(prices))
+
+        print("🎯 THRESHOLD:", threshold)
 
         if score < threshold:
-            print("LOW CONFIDENCE SKIP")
+            print("❌ BELOW THRESHOLD")
             return
 
+        # =====================================
+        # ORDERFLOW FILTERS
+        # =====================================
         zones = self.orderflow.liquidity_zones(prices)
-
-        support = zones["support"]
-        resistance = zones["resistance"]
 
         momentum = abs(prices[-1] - prices[-5])
 
-        if self.orderflow.fake_breakout(
-            price,
-            resistance,
-            support,
-            momentum
-        ):
-            print("FAKE BREAKOUT SKIP")
+        if self.orderflow.fake_breakout(price, zones["resistance"], zones["support"], momentum):
+            print("🚫 FAKE BREAKOUT")
             return
 
         compression = self.orderflow.compression(prices)
 
-        quality = self.orderflow.quality_score(
-            score,
-            vol,
-            compression
-        )
+        quality = self.orderflow.quality_score(score, vol, compression)
 
-        if quality < 0.6:
-            print("LOW QUALITY SKIP")
+        print("⭐ QUALITY:", quality)
+
+        if quality < 0.5:
+            print("❌ LOW QUALITY SKIP")
             return
 
-        horizon = self.classify_horizon(vol, score, prices)
-        hold = self.horizon_to_minutes(horizon)
-
-        size = self.capital_allocator.allocate(
-            self.base_capital,
-            decision.get("strategy", "trend"),
-            horizon,
-            score,
-            vol,
-            self.drawdown.drawdown(self.balance)
-        )
-
-        size *= self.ai.risk_multiplier()
+        # =====================================
+        # EXECUTION ALWAYS REACHES HERE NOW
+        # =====================================
+        trade_direction = "LONG" if direction == "BUY" else "SHORT"
 
         slippage = self.orderflow.slippage(vol)
 
-        entry = price + slippage if direction == "BUY" else price - slippage
+        entry = price + slippage if trade_direction == "LONG" else price - slippage
 
-        tp, sl = self.tp_sl.generate(direction, entry, vol)
+        tp, sl = self.tp_sl.generate(trade_direction, entry, vol)
 
         position = Position(
-            direction="LONG" if direction == "BUY" else "SHORT",
+            direction=trade_direction,
             entry_price=entry,
-            size=size,
+            size=1,
             stop_loss=sl,
             take_profit=tp,
-            hold_minutes=hold
+            hold_minutes=1
         )
 
         position.strategy = decision.get("strategy", "trend")
@@ -349,9 +316,8 @@ class Engine:
         self.cooldown = self.cooldown_limit
 
         print("🚀 TRADE OPENED")
-        print("DIR:", position.direction)
+        print("DIR:", trade_direction)
         print("ENTRY:", entry)
         print("TP:", tp)
         print("SL:", sl)
-        print("SIZE:", size)
-        print("BALANCE:", self.balance)
+        print("BAL:", self.balance)
