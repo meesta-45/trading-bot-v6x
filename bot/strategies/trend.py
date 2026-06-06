@@ -1,33 +1,27 @@
-from bot.indicators.ema import calculate_ema
-
-
 class TrendStrategy:
 
     def generate(self, prices):
 
-        if len(prices) < 50:
+        if len(prices) < 30:
             return None
 
-        ema10 = calculate_ema(prices, 10)
-        ema30 = calculate_ema(prices, 30)
+        recent = prices[-20:]
 
-        if ema10 is None or ema30 is None:
-            return None
+        ema_fast = sum(recent[-5:]) / 5
+        ema_slow = sum(recent[-20:]) / 20
 
-        if ema10 > ema30:
+        if ema_fast > ema_slow:
 
             return {
-                "direction": "LONG",
-                "confidence": 0.7,
-                "expected_value": 1.2
+                "direction": "BUY",
+                "score": min(1.0, (ema_fast - ema_slow) / ema_slow * 10)
             }
 
-        if ema10 < ema30:
+        elif ema_fast < ema_slow:
 
             return {
-                "direction": "SHORT",
-                "confidence": 0.7,
-                "expected_value": 1.2
+                "direction": "SELL",
+                "score": min(1.0, (ema_slow - ema_fast) / ema_slow * 10)
             }
 
         return None
