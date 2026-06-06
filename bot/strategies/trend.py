@@ -9,21 +9,18 @@ class TrendStrategy:
         mid = sum(prices[-15:]) / 15
         long = sum(prices[-30:]) / 30
 
-        bullish = short > mid > long
-        bearish = short < mid < long
+        trend_strength = abs(short - long) / long
 
-        diff = abs(short - long)
+        strength = min(1.0, trend_strength * 50)  # 🔥 BOOSTED
 
-        strength = min(1.0, diff / long * 10)
-
-        if bullish:
+        if short > mid > long:
 
             return {
                 "direction": "BUY",
                 "score": strength
             }
 
-        if bearish:
+        if short < mid < long:
 
             return {
                 "direction": "SELL",
