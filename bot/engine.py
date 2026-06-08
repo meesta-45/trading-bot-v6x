@@ -24,6 +24,8 @@ from bot.ai.adaptive_ai import AdaptiveAI
 from bot.ai.market_regime import MarketRegimeAI
 from bot.ai.self_learning_ai import SelfLearningAI
 
+from bot.execution.institutional_execution import InstitutionalExecution
+
 
 class Engine:
 
@@ -31,7 +33,7 @@ class Engine:
 
         self.prices = deque(maxlen=1000)
 
-        print("🔥 V29 SELF-LEARNING ENGINE ACTIVE")
+        print("🔥 V30 INSTITUTIONAL EXECUTION ENGINE ACTIVE")
 
         # =====================================
         # MODE
@@ -56,6 +58,11 @@ class Engine:
         self.learning_ai = SelfLearningAI()
 
         # =====================================
+        # EXECUTION ENGINE (NEW V30 CORE)
+        # =====================================
+        self.execution = InstitutionalExecution()
+
+        # =====================================
         # PORTFOLIO
         # =====================================
         self.voting = VotingEngine()
@@ -70,18 +77,14 @@ class Engine:
         self.tp_sl = TPSLEngine()
 
         # =====================================
-        # EXECUTION
+        # EXECUTION / ANALYSIS
         # =====================================
         self.positions = PositionManager()
-
-        # =====================================
-        # ANALYSIS
-        # =====================================
         self.reversal = ReversalDetector()
         self.orderflow = OrderFlowEngine()
 
         # =====================================
-        # ACCOUNT
+        # ACCOUNT STATE
         # =====================================
         self.balance = 10000
         self.wins = 0
@@ -95,8 +98,6 @@ class Engine:
         self.max_positions = 2
         self.min_data = 30
 
-    # =====================================================
-    # SAFE SCORE
     # =====================================================
     def _safe_score(self, signal):
 
@@ -113,8 +114,6 @@ class Engine:
         return 0.5
 
     # =====================================================
-    # POSITION MANAGEMENT + LEARNING
-    # =====================================================
     def _manage_positions(self, price):
 
         for p in list(self.positions.active_positions()):
@@ -122,7 +121,6 @@ class Engine:
             pnl = 0
             closed = False
 
-            # LONG
             if p.direction == "LONG":
 
                 if price >= p.take_profit:
@@ -140,7 +138,6 @@ class Engine:
                     closed = True
                     print("⚠ REVERSAL LONG")
 
-            # SHORT
             else:
 
                 if price <= p.take_profit:
@@ -158,7 +155,6 @@ class Engine:
                     closed = True
                     print("⚠ REVERSAL SHORT")
 
-            # TIME EXIT
             if p.expired():
                 pnl = (price - p.entry_price) * p.size if p.direction == "LONG" else (p.entry_price - price) * p.size
                 closed = True
@@ -175,12 +171,7 @@ class Engine:
 
                 strategy = getattr(p, "strategy", "trend")
 
-                # =====================================
-                # SELF LEARNING UPDATE (V29 CORE)
-                # =====================================
                 self.learning_ai.update(strategy, pnl)
-
-                # keep adaptive AI too (optional hybrid)
                 self.ai.update_strategy(strategy, pnl)
 
                 self.positions.close_position(p)
@@ -190,12 +181,6 @@ class Engine:
                 print("PNL:", round(pnl, 2))
                 print("BALANCE:", round(self.balance, 2))
 
-                total = max(self.wins + self.losses, 1)
-
-                print("WIN RATE:", round(self.wins / total, 3))
-
-    # =====================================================
-    # MAIN ENGINE LOOP
     # =====================================================
     def on_price(self, price):
 
@@ -227,7 +212,7 @@ class Engine:
         print("✅ ALLOWED:", allowed)
 
         if len(self.positions.active_positions()) >= self.max_positions:
-            print("🚫 MAX POSITIONS REACHED")
+            print("🚫 MAX POSITIONS")
             return
 
         # =====================================
@@ -257,9 +242,6 @@ class Engine:
 
             score = self._safe_score(signal)
 
-            # =====================================
-            # V29 SELF LEARNING WEIGHT
-            # =====================================
             weight = self.learning_ai.weight(name)
 
             final_score = score * weight
@@ -323,11 +305,23 @@ class Engine:
 
         size = self.base_capital
 
-        slippage = self.orderflow.slippage(vol)
-
+        # =====================================
+        # V30 INSTITUTIONAL EXECUTION (NEW CORE)
+        # =====================================
         trade_direction = "LONG" if direction == "BUY" else "SHORT"
 
-        entry = price + slippage if trade_direction == "LONG" else price - slippage
+        exec_result = self.execution.execute(
+            price=price,
+            direction=trade_direction,
+            volatility=vol,
+            size=size
+        )
+
+        entry = exec_result["fill_price"]
+        spread = exec_result["spread"]
+        slippage = exec_result["slippage"]
+        delay = exec_result["delay"]
+        fill_quality = exec_result["fill_quality"]
 
         tp, sl = self.tp_sl.generate(trade_direction, entry, vol)
 
@@ -347,8 +341,15 @@ class Engine:
         self.cooldown = self.cooldown_limit
 
         print("\n🚀 TRADE OPENED")
+
         print("DIR:", trade_direction)
         print("ENTRY:", round(entry, 4))
         print("TP:", round(tp, 4))
         print("SL:", round(sl, 4))
+
+        print("📉 SPREAD:", round(spread, 6))
+        print("⚡ SLIPPAGE:", round(slippage, 6))
+        print("⏱ DELAY:", delay)
+        print("🏷 FILL QUALITY:", fill_quality)
+
         print("BALANCE:", round(self.balance, 2))
