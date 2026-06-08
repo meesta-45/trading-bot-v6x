@@ -1,30 +1,52 @@
-from collections import defaultdict
-
-
 class VotingEngine:
 
     def combine(self, signals):
 
-        votes = defaultdict(float)
-
-        for s in signals:
-
-            if not s:
-                continue
-
-            direction = s["direction"]
-
-            votes[direction] += (
-                s["confidence"] *
-                s["expected_value"]
-            )
-
-        if not votes:
+        if not signals:
             return None
 
-        best = max(votes.items(), key=lambda x: x[1])
+        buy_score = 0
+        sell_score = 0
 
-        return {
-            "direction": best[0],
-            "score": best[1]
-        }
+        best_strategy = None
+        best_score = 0
+
+        for signal in signals:
+
+            direction = signal["direction"]
+
+            score = signal.get("score", 0.5)
+
+            if score > best_score:
+                best_score = score
+                best_strategy = signal.get(
+                    "strategy",
+                    "trend"
+                )
+
+            if direction == "BUY":
+                buy_score += score
+
+            elif direction == "SELL":
+                sell_score += score
+
+        if buy_score == 0 and sell_score == 0:
+            return None
+
+        if buy_score > sell_score:
+
+            return {
+                "direction": "BUY",
+                "score": buy_score,
+                "strategy": best_strategy
+            }
+
+        elif sell_score > buy_score:
+
+            return {
+                "direction": "SELL",
+                "score": sell_score,
+                "strategy": best_strategy
+            }
+
+        return None
