@@ -5,7 +5,7 @@ class InstitutionalExecution:
 
     def __init__(self):
 
-        self.base_spread = 0.2  # synthetic spread baseline
+        self.base_spread = 0.0002
 
     # =====================================
     # SPREAD MODEL
@@ -17,53 +17,61 @@ class InstitutionalExecution:
     # =====================================
     # SLIPPAGE MODEL
     # =====================================
-    def slippage(self, volatility, order_size):
+    def slippage(self, volatility, size):
 
-        base = volatility * 0.05
+        impact = size * 0.00001
 
-        impact = order_size * 0.001
+        noise = random.uniform(
+            0,
+            volatility * 0.05
+        )
 
-        noise = random.uniform(-0.1, 0.1)
-
-        return base + impact + noise
+        return impact + noise
 
     # =====================================
-    # EXECUTION QUALITY
+    # EXECUTION DELAY
     # =====================================
-    def execution_quality(self, volatility):
+    def execution_delay(self, volatility):
 
         if volatility < 0.5:
-            return "EXCELLENT"
-
-        if volatility < 1.5:
-            return "GOOD"
-
-        if volatility < 3:
-            return "POOR"
-
-        return "VERY_POOR"
+            return 0
+        elif volatility < 1.5:
+            return 1
+        else:
+            return 2
 
     # =====================================
-    # PARTIAL FILL SIMULATION
+    # FILL QUALITY
     # =====================================
-    def fill_ratio(self, volatility, order_size):
+    def fill_quality(self, volatility, size):
 
-        if volatility < 1:
-            return 1.0
+        base = 1 - (volatility * 0.1)
 
-        if volatility < 2:
+        penalty = size * 0.00001
 
-            return random.uniform(0.7, 1.0)
+        quality = base - penalty
 
-        if volatility < 3:
-
-            return random.uniform(0.4, 0.8)
-
-        return random.uniform(0.2, 0.6)
+        return max(0.2, min(1.0, quality))
 
     # =====================================
-    # LATENCY SIMULATION
+    # CORE EXECUTION METHOD (FIXED)
     # =====================================
-    def latency_penalty(self, volatility):
+    def execute(self, price, direction, volatility, size):
 
-        return random.uniform(0, volatility * 0.02)
+        spread = self.spread(volatility)
+        slip = self.slippage(volatility, size)
+        delay = self.execution_delay(volatility)
+        fill_quality = self.fill_quality(volatility, size)
+
+        if direction == "LONG":
+            fill_price = price + spread + slip
+        else:
+            fill_price = price - spread - slip
+
+        return {
+            "fill_price": round(fill_price, 4),
+            "spread": round(spread, 6),
+            "slippage": round(slip, 6),
+            "delay": delay,
+            "fill_quality": round(fill_quality, 3)
+        }
